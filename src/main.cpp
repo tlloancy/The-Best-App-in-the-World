@@ -12,16 +12,21 @@ int main() {
     Renderer renderer;
     auto search = std::make_unique<MinimaxSearch>();
     Logger::log("Renderer and search initialized");
+    bool isWhiteTurn = true;
 
     while (!renderer.shouldClose()) {
         Logger::log("Entering render loop");
         renderer.renderBoard(board);
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_MOUSEBUTTONDOWN) {
+            if (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEMOTION || event.type == SDL_MOUSEBUTTONUP) {
                 int x, y;
                 SDL_GetMouseState(&x, &y);
-                renderer.handleClick(x, y, board);
+                renderer.handleEvents(x, y, event.type, board);
+            }
+            if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_r) { // Reset avec 'r'
+                board = Board();
+                isWhiteTurn = true;
             }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(16)); // Limite à 60 FPS

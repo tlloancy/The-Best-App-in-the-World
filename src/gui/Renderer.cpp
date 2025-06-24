@@ -32,6 +32,10 @@ Renderer::Renderer() {
         SDL_Quit();
         throw std::runtime_error("TTF_OpenFont failed: " + std::string(TTF_GetError()));
     }
+    // Curseurs personnalisés
+    cursorOpen_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
+    cursorClosed_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZEALL);
+    SDL_SetCursor(cursorOpen_);
     Logger::log("SDL and TTF initialized successfully");
 }
 
@@ -39,6 +43,8 @@ Renderer::~Renderer() {
     if (font_) TTF_CloseFont(font_);
     if (renderer_) SDL_DestroyRenderer(renderer_);
     if (window_) SDL_DestroyWindow(window_);
+    if (cursorOpen_) SDL_FreeCursor(cursorOpen_);
+    if (cursorClosed_) SDL_FreeCursor(cursorClosed_);
     TTF_Quit();
     SDL_Quit();
     Logger::log("SDL and TTF cleaned up");
@@ -65,6 +71,13 @@ void Renderer::renderBoard(const Board& board) {
             renderPiece(board.getPieces()[idx]->getType(), board.getPieces()[idx]->getColor(),
                        static_cast<int>(50 + file * 87.5), static_cast<int>(50 + rank * 62.5));
         }
+    }
+    if (selectedSquare_ != -1) {
+        int file = selectedSquare_ % 8;
+        int rank = 7 - (selectedSquare_ / 8);
+        SDL_SetRenderDrawColor(renderer_, 0, 128, 255, 64); // Bleu clair très transparent
+        SDL_Rect rect = {static_cast<int>(50 + file * 87.5), static_cast<int>(50 + rank * 62.5), 87, 62};
+        SDL_RenderFillRect(renderer_, &rect);
     }
     SDL_RenderPresent(renderer_);
     logDebug("Board with pieces rendered");
@@ -121,22 +134,36 @@ bool Renderer::shouldClose() {
     return false;
 }
 
-void Renderer::handleClick(int x, int y, Board& board) {
+void Renderer::handleEvents(int x, int y, Uint32 eventType, Board& board) {
     int file = (x - 50) / 87.5;
     int rank = (y - 50) / 62.5;
     if (file >= 0 && file < 8 && rank >= 0 && rank < 8) {
         int square = (7 - rank) * 8 + file;
-        logDebug("Click on square: " + std::to_string(square));
-        if (selectedSquare_ == -1 && board.getPieces()[square]) {
+        logDebug("Event on square: " + std::to_string(square) + ", type: " + std::to_string(eventType));
+        updateCursor(eventType == SDL_MOUSEMOTION && (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON_LMASK));
+        if (eventType == SDL_MOUSEBUTTONDOWN && board.getPieces()[square]) {
             selectedSquare_ = square;
             logDebug("Selected square: " + std::to_string(square));
-        } else if (selectedSquare_ != -1) {
-            if (board.movePiece(selectedSquare_, square)) {
-                logDebug("Moved from " + std::to_string(selectedSquare_) + " to " + std::to_string(square));
+        } else if (eventType == SDL_MOUSEBUTTONUP && selectedSquare_ != -1) {
+            if (board.getPieces()[selectedSquare_]) {
+                Bitboard validMoves = board.getPieces()[selectedSquare_]->generateMoves(board.getOccupied(), selectedSquare_);
+                if (validMoves & Bitboard(1ULL << square) && !board.getPieces()[square]) {
+                    if (board.movePiece(selectedSquare_, square)) {
+                        logDebug("Moved from " + std::to_string(selectedSquare_) + " to " + std::to_string(square));
+                    }
+                } else {
+                    logDebug("Invalid move to " + std::to_string(square));
+                }
             }
             selectedSquare_ = -1;
         }
+    } else if (eventType == SDL_MOUSEBUTTONUP) {
+        selectedSquare_ = -1;
     }
+}
+
+void Renderer::updateCursor(bool isDragging) {
+    SDL_SetCursor(isDragging ? cursorClosed_ : cursorOpen_);
 }
 
 void Renderer::logDebug(const std::string& message) {

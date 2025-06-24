@@ -25,13 +25,17 @@ public:
     void swapBuffers();
     bool isKeyPressed(int key) const;
     void closeWindow();
-    void handleClick(int x, int y, Board& board);
+    void handleEvents(int x, int y, Uint32 eventType, Board& board);
 private:
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
     TTF_Font* font_ = nullptr;
     int selectedSquare_ = -1;
     bool debugEnabled_ = false;
+    int dragStartX_ = -1, dragStartY_ = -1;
+    SDL_Cursor* cursorOpen_ = nullptr;
+    SDL_Cursor* cursorClosed_ = nullptr;
     void renderPiece(PieceType type, Color color, int x, int y);
     void logDebug(const std::string& message);
+    void updateCursor(bool isDragging);
 };
