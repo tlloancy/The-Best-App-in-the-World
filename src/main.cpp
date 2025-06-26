@@ -21,13 +21,10 @@ int main() {
     bool running = true;
 
     while (running) {
-        renderer.renderBoard(board);
+        renderer.renderBoard(board, isWhiteTurn);
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
-            float x, y;
-            SDL_GetMouseState(&x, &y);
-            Logger::log("Mouse event at x: " + std::to_string(x) + ", y: " + std::to_string(y) + ", type: " + std::to_string(event.type));
-            renderer.handleEvents(event, board);
+            renderer.handleEvents(event, board, isWhiteTurn);
             if (event.type == SDL_EVENT_QUIT || (event.type == SDL_EVENT_KEY_DOWN && (event.key.key == SDLK_ESCAPE || event.key.key == SDLK_Q))) {
                 running = false;
             }

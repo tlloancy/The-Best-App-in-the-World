@@ -3,6 +3,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 #include <SDL3/SDL_video.h>
 #include <SDL3/SDL_render.h>
+#include <chrono>
 #include "core/Board.hpp"
 #include "../utils/Logger.hpp"
 
@@ -21,15 +22,21 @@ class Renderer {
 public:
     Renderer();
     ~Renderer();
-    void renderBoard(const Board& board);
+    void renderBoard(const Board& board, bool isWhiteTurn);
     void renderSpiral(float evaluation);
     bool shouldClose();
     void swapBuffers();
     bool isKeyPressed(int key) const;
     void closeWindow();
-    void handleEvents(const SDL_Event& event, Board& board);
+    void handleEvents(const SDL_Event& event, Board& board, bool& isWhiteTurn);
     void setSelectedSquare(int square) { selectedSquare_ = square; }
     int getSelectedSquare() const { return selectedSquare_; }
+    void renderEvaluation(float eval);
+    int getSquareFromCoords(int x, int y);
+    int getWhiteTime() const { return whiteTime_; }
+    int getBlackTime() const { return blackTime_; }
+    void setWhiteTime(int time) { whiteTime_ = time; }
+    void setBlackTime(int time) { blackTime_ = time; }
 private:
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
@@ -41,8 +48,12 @@ private:
     SDL_Cursor* cursorClosed_ = nullptr;
     bool isDragging_ = false;
     bool isClickSelecting_ = false;
+    int whiteTime_ = 600; // 10 minutes en secondes
+    int blackTime_ = 600; // 10 minutes en secondes
+    std::chrono::steady_clock::time_point lastUpdate_;
     void renderPiece(PieceType type, Color color, int x, int y);
     void logDebug(const std::string& message);
     void updateCursor(bool isDragging);
-    int getSquareFromCoords(int x, int y);
+    void renderTurnIndicator(bool isWhiteTurn);
+    std::chrono::steady_clock::time_point lastMoveTime_;
 };

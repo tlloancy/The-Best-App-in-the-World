@@ -2,29 +2,40 @@
 #include <stdexcept>
 #include <iostream>
 #include <chrono>
+#include <sstream>
 
 Renderer::Renderer() {
     if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0) {
         throw std::runtime_error("SDL_InitSubSystem failed: " + std::string(SDL_GetError()));
     }
-    window_ = SDL_CreateWindow("Cosmic Chess", 800, 600, 0);
+    window_ = SDL_CreateWindow("Cosmic Chess", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!window_) {
         SDL_QuitSubSystem(SDL_INIT_VIDEO);
         throw std::runtime_error("SDL_CreateWindow failed: " + std::string(SDL_GetError()));
     }
-    renderer_ = SDL_CreateRenderer(window_, NULL);
+    SDL_SetWindowBordered(window_, true);
+    SDL_SetWindowSize(window_, 800, 600); // Forcer une taille explicite
+    Uint32 flags = SDL_GetWindowFlags(window_);
+    if (!(flags & SDL_WINDOW_RESIZABLE) || (flags & SDL_WINDOW_BORDERLESS)) {
+        logDebug("Warning: Window flags issue - Resizable: " + std::to_string(flags & SDL_WINDOW_RESIZABLE) + ", Borderless: " + std::to_string(flags & SDL_WINDOW_BORDERLESS));
+        SDL_SetWindowBordered(window_, true);
+    } else {
+        logDebug("Window flags: " + std::to_string(flags));
+    }
+    renderer_ = SDL_CreateRenderer(window_, NULL); // Renderer par défaut
     if (!renderer_) {
         SDL_DestroyWindow(window_);
         SDL_QuitSubSystem(SDL_INIT_VIDEO);
         throw std::runtime_error("SDL_CreateRenderer failed: " + std::string(SDL_GetError()));
     }
+    logDebug("Renderer created successfully");
     if (TTF_Init() < 0) {
         SDL_DestroyRenderer(renderer_);
         SDL_DestroyWindow(window_);
         SDL_QuitSubSystem(SDL_INIT_VIDEO);
         throw std::runtime_error("TTF_Init failed: " + std::string(SDL_GetError()));
     }
-    font_ = TTF_OpenFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 40);
+    font_ = TTF_OpenFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24);
     if (!font_) {
         TTF_Quit();
         SDL_DestroyRenderer(renderer_);
@@ -35,6 +46,9 @@ Renderer::Renderer() {
     cursorOpen_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
     cursorClosed_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_MOVE);
     SDL_SetCursor(cursorOpen_);
+    lastUpdate_ = std::chrono::steady_clock::now();
+    lastMoveTime_ = std::chrono::steady_clock::now();
+    debugEnabled_ = false; // Logs désactivés par défaut
     Logger::log("SDL3 and TTF initialized successfully");
 }
 
@@ -49,35 +63,102 @@ Renderer::~Renderer() {
     Logger::log("SDL3 and TTF cleaned up");
 }
 
-void Renderer::renderBoard(const Board& board) {
-    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
+void Renderer::renderBoard(const Board& board, bool isWhiteTurn) {
+    SDL_SetRenderDrawColor(renderer_, 30, 30, 30, 255); // Fond sombre élégant
     SDL_RenderClear(renderer_);
+
+    // Plateau avec bordures subtiles
     for (int i = 0; i < 8; ++i) for (int j = 0; j < 8; ++j) {
-        SDL_SetRenderDrawColor(renderer_, (i + j + 1) % 2 ? 221 : 166, (i + j + 1) % 2 ? 184 : 109, (i + j + 1) % 2 ? 140 : 79, 255);
-        SDL_FRect rect = {static_cast<float>(50 + (7 - i) * 87.5), static_cast<float>(50 + (7 - j) * 62.5), 87.0f, 62.0f};
+        SDL_SetRenderDrawColor(renderer_, (i + j + 1) % 2 ? 200 : 150, (i + j + 1) % 2 ? 180 : 120, (i + j + 1) % 2 ? 160 : 100, 255);
+        SDL_FRect rect = {50.0f + i * 87.5f, 100.0f + j * 62.5f, 87.0f, 62.0f};
         SDL_RenderFillRect(renderer_, &rect);
     }
-    SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
-    for (int i = 0; i <= 8; ++i) {
-        SDL_RenderLine(renderer_, 50.0f + i * 87.5f, 50.0f, 50.0f + i * 87.5f, 550.0f);
-        SDL_RenderLine(renderer_, 50.0f, 50.0f + i * 62.5f, 750.0f, 50.0f + i * 62.5f);
-    }
+    SDL_SetRenderDrawColor(renderer_, 200, 200, 200, 255);
+    SDL_FRect borderRect = {50.0f, 100.0f, 700.0f, 500.0f};
+    SDL_RenderRect(renderer_, &borderRect);
+
+    // Pièces
     for (int idx = 0; idx < 64; ++idx) {
         if (board.getPieces()[idx]) {
             int file = idx % 8;
             int rank = 7 - (idx / 8);
             renderPiece(board.getPieces()[idx]->getType(), board.getPieces()[idx]->getColor(),
-                       static_cast<int>(50 + file * 87.5), static_cast<int>(50 + rank * 62.5));
+                       static_cast<int>(50 + file * 87.5), static_cast<int>(100 + rank * 62.5));
         }
     }
-    if (selectedSquare_ != -1) {
-        int file = selectedSquare_ % 8;
-        int rank = 7 - (selectedSquare_ / 8);
-        SDL_SetRenderDrawColor(renderer_, 0, 128, 255, 128); // Semi-transparent blue for selection
-        SDL_FRect rect = {static_cast<float>(50 + file * 87.5), static_cast<float>(50 + rank * 62.5), 87.0f, 62.0f};
+
+    // Sélection subtile
+    if (getSelectedSquare() != -1) {
+        int file = getSelectedSquare() % 8;
+        int rank = 7 - (getSelectedSquare() / 8);
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 50);
+        SDL_FRect rect = {50.0f + file * 87.5f, 100.0f + rank * 62.5f, 87.0f, 62.0f};
         SDL_RenderFillRect(renderer_, &rect);
+        SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 100);
+        SDL_FRect border = {50.0f + file * 87.5f + 1.0f, 100.0f + rank * 62.5f + 1.0f, 85.0f, 60.0f};
+        SDL_RenderRect(renderer_, &border);
+    }
+
+    renderTurnIndicator(isWhiteTurn);
+    renderEvaluation(0.0f);
+
+    // Afficher les clocks avec décompte continu
+    auto now = std::chrono::steady_clock::now();
+    std::chrono::duration<float> elapsed = now - lastUpdate_;
+    if (elapsed.count() >= 1.0f) {
+        if (isWhiteTurn && whiteTime_ > 0) whiteTime_ -= 1;
+        else if (blackTime_ > 0) blackTime_ -= 1;
+        lastUpdate_ = now;
+    }
+    if (whiteTime_ < 0) whiteTime_ = 0;
+    if (blackTime_ < 0) blackTime_ = 0;
+
+    std::stringstream whiteTimeStr, blackTimeStr;
+    int whiteMin = whiteTime_ / 60;
+    int whiteSec = whiteTime_ % 60;
+    int blackMin = blackTime_ / 60;
+    int blackSec = blackTime_ % 60;
+    whiteTimeStr << whiteMin << ":" << (whiteSec < 10 ? "0" : "") << whiteSec;
+    blackTimeStr << blackMin << ":" << (blackSec < 10 ? "0" : "") << blackSec;
+
+    SDL_Color textColor = {220, 220, 220, 255};
+    SDL_Surface* whiteSurface = TTF_RenderText_Solid(font_, whiteTimeStr.str().c_str(), whiteTimeStr.str().length(), textColor);
+    SDL_Surface* blackSurface = TTF_RenderText_Solid(font_, blackTimeStr.str().c_str(), blackTimeStr.str().length(), textColor);
+    if (whiteSurface && blackSurface) {
+        SDL_Texture* whiteTexture = SDL_CreateTextureFromSurface(renderer_, whiteSurface);
+        SDL_Texture* blackTexture = SDL_CreateTextureFromSurface(renderer_, blackSurface);
+        SDL_FRect whiteRect = {20.0f, 20.0f, static_cast<float>(whiteSurface->w), static_cast<float>(whiteSurface->h)};
+        SDL_FRect blackRect = {760.0f - blackSurface->w, 20.0f, static_cast<float>(blackSurface->w), static_cast<float>(blackSurface->h)};
+        SDL_RenderTexture(renderer_, whiteTexture, NULL, &whiteRect);
+        SDL_RenderTexture(renderer_, blackTexture, NULL, &blackRect);
+        SDL_DestroyTexture(whiteTexture);
+        SDL_DestroyTexture(blackTexture);
+    }
+    if (whiteSurface) SDL_DestroySurface(whiteSurface);
+    if (blackSurface) SDL_DestroySurface(blackSurface);
+
+    // Afficher "Time's up!" si temps écoulé
+    if (whiteTime_ == 0 || blackTime_ == 0) {
+        SDL_Color redColor = {255, 0, 0, 200};
+        std::string timeUp = (whiteTime_ == 0 ? "Black wins! Time's up!" : "White wins! Time's up!");
+        SDL_Surface* timeUpSurface = TTF_RenderText_Solid(font_, timeUp.c_str(), timeUp.length(), redColor);
+        if (timeUpSurface) {
+            SDL_Texture* timeUpTexture = SDL_CreateTextureFromSurface(renderer_, timeUpSurface);
+            SDL_FRect timeUpRect = {400.0f - timeUpSurface->w / 2, 300.0f - timeUpSurface->h / 2, static_cast<float>(timeUpSurface->w), static_cast<float>(timeUpSurface->h)};
+            SDL_RenderTexture(renderer_, timeUpTexture, NULL, &timeUpRect);
+            SDL_DestroyTexture(timeUpTexture);
+            SDL_DestroySurface(timeUpSurface);
+        }
+    }
+
+    logDebug("Before SDL_RenderPresent");
+    if (renderer_ && SDL_GetCurrentRenderOutputSize(renderer_, NULL, NULL) == 0) {
+        logDebug("Renderer output size invalid, forcing update");
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
+        SDL_RenderClear(renderer_);
     }
     SDL_RenderPresent(renderer_);
+    logDebug("After SDL_RenderPresent");
 }
 
 void Renderer::renderPiece(PieceType type, Color color, int x, int y) {
@@ -107,6 +188,18 @@ void Renderer::renderPiece(PieceType type, Color color, int x, int y) {
 
 void Renderer::renderSpiral(float evaluation) {}
 
+void Renderer::renderEvaluation(float eval) {
+    SDL_SetRenderDrawColor(renderer_, eval > 0 ? 50 : 200, eval > 0 ? 200 : 50, 100, 100);
+    SDL_FRect bar = {50.0f, 70.0f, 700.0f * std::abs(eval) / 10.0f, 20.0f};
+    SDL_RenderFillRect(renderer_, &bar);
+}
+
+void Renderer::renderTurnIndicator(bool isWhiteTurn) {
+    SDL_SetRenderDrawColor(renderer_, isWhiteTurn ? 144 : 220, isWhiteTurn ? 238 : 128, 144, 32);
+    SDL_FRect indicator = {isWhiteTurn ? 10.0f : 740.0f, 100.0f, 5.0f, 500.0f};
+    SDL_RenderFillRect(renderer_, &indicator);
+}
+
 void Renderer::swapBuffers() {}
 
 bool Renderer::shouldClose() {
@@ -124,64 +217,49 @@ bool Renderer::shouldClose() {
     return false;
 }
 
-void Renderer::handleEvents(const SDL_Event& event, Board& board) {
+void Renderer::handleEvents(const SDL_Event& event, Board& board, bool& isWhiteTurn) {
     int x = (event.type == SDL_EVENT_MOUSE_MOTION) ? event.motion.x : event.button.x;
     int y = (event.type == SDL_EVENT_MOUSE_MOTION) ? event.motion.y : event.button.y;
     Uint32 eventType = event.type;
     Uint32 mouseState = SDL_GetMouseState(NULL, NULL);
     int square = getSquareFromCoords(x, y);
 
-    logDebug("Event handled, type: " + std::to_string(eventType) + ", x: " + std::to_string(x) + ", y: " + std::to_string(y));
+    if (debugEnabled_) logDebug("Event handled, type: " + std::to_string(eventType) + ", x: " + std::to_string(x) + ", y: " + std::to_string(y));
 
     if (eventType == SDL_EVENT_MOUSE_BUTTON_DOWN && (mouseState & SDL_BUTTON_LMASK)) {
-        if (square != -1 && board.getPieces()[square] && !isDragging_) {
-            selectedSquare_ = square;
-            dragStartX_ = x;
-            dragStartY_ = y;
-            isDragging_ = true;
-            logDebug("Drag started on square: " + std::to_string(square));
-            updateCursor(true);
-        } else if (square != -1 && board.getPieces()[square] && !isClickSelecting_) {
-            selectedSquare_ = square;
-            isClickSelecting_ = true;
-            logDebug("Click selected square: " + std::to_string(square));
+        if (square != -1 && board.getPieces()[square] && board.getPieces()[square]->getColor() == (isWhiteTurn ? Color::White : Color::Black)) {
+            setSelectedSquare(square);
+            if (debugEnabled_) logDebug("Selected square: " + std::to_string(square));
+            lastMoveTime_ = std::chrono::steady_clock::now();
         }
-    } else if (eventType == SDL_EVENT_MOUSE_MOTION && (mouseState & SDL_BUTTON_LMASK) && isDragging_) {
-        logDebug("Dragging to x: " + std::to_string(x) + ", y: " + std::to_string(y));
     } else if (eventType == SDL_EVENT_MOUSE_BUTTON_UP) {
-        if (isDragging_ && square != -1 && square != selectedSquare_) {
-            if (board.getPieces()[selectedSquare_]) {
-                Bitboard validMoves = board.getPieces()[selectedSquare_]->generateMoves(board.getOccupied(), selectedSquare_);
+        if (getSelectedSquare() != -1 && square != -1 && square != getSelectedSquare()) {
+            if (board.getPieces()[getSelectedSquare()] && board.getPieces()[getSelectedSquare()]->getColor() == (isWhiteTurn ? Color::White : Color::Black)) {
+                Bitboard validMoves = board.getPieces()[getSelectedSquare()]->generateMoves(board.getOccupied(), getSelectedSquare());
                 if (validMoves & Bitboard(1ULL << square) && !board.getPieces()[square]) {
-                    board.movePiece(selectedSquare_, square);
-                    logDebug("Drag move from " + std::to_string(selectedSquare_) + " to " + std::to_string(square));
+                    board.movePiece(getSelectedSquare(), square);
+                    if (debugEnabled_) logDebug("Move from " + std::to_string(getSelectedSquare()) + " to " + std::to_string(square));
+                    isWhiteTurn = !isWhiteTurn;
+                    lastMoveTime_ = std::chrono::steady_clock::now();
                 } else {
-                    logDebug("Invalid drag move to " + std::to_string(square));
+                    if (debugEnabled_) logDebug("Invalid move to " + std::to_string(square));
                 }
             }
-            selectedSquare_ = -1;
-            isDragging_ = false;
-            updateCursor(false);
-        } else if (isClickSelecting_ && square != -1 && square != selectedSquare_) {
-            if (board.getPieces()[selectedSquare_]) {
-                Bitboard validMoves = board.getPieces()[selectedSquare_]->generateMoves(board.getOccupied(), selectedSquare_);
-                if (validMoves & Bitboard(1ULL << square) && !board.getPieces()[square]) {
-                    board.movePiece(selectedSquare_, square);
-                    logDebug("Click move from " + std::to_string(selectedSquare_) + " to " + std::to_string(square));
-                } else {
-                    logDebug("Invalid click move to " + std::to_string(square));
-                }
-            }
-            selectedSquare_ = -1;
-            isClickSelecting_ = false;
+            setSelectedSquare(-1);
         }
+    } else if (eventType == SDL_EVENT_QUIT || (eventType == SDL_EVENT_KEY_DOWN && (event.key.key == SDLK_ESCAPE || event.key.key == SDLK_Q))) {
+        closeWindow();
+    } else if (eventType == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_D) {
+        debugEnabled_ = !debugEnabled_;
+        if (debugEnabled_) logDebug("Debug toggled to: true");
+        else Logger::log("Debug toggled to: false");
     }
 }
 
 int Renderer::getSquareFromCoords(int x, int y) {
-    if (x >= 50 && x <= 750 && y >= 50 && y <= 550) {
+    if (x >= 50 && x <= 750 && y >= 100 && y <= 600) {
         int file = (x - 50) / 87.5;
-        int rank = (y - 50) / 62.5;
+        int rank = (y - 100) / 62.5;
         if (file >= 0 && file < 8 && rank >= 0 && rank < 8) {
             return (7 - rank) * 8 + file;
         }
