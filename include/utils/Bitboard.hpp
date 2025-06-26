@@ -13,7 +13,6 @@ public:
     Bitboard operator>>(int shift) const { return Bitboard(value_ >> shift); }
     Bitboard& operator|=(const Bitboard& other) { value_ |= other.value_; return *this; }
     Bitboard& operator&=(const Bitboard& other) { value_ &= other.value_; return *this; }
-
 private:
     uint64_t value_;
 };

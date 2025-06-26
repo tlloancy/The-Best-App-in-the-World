@@ -5,13 +5,17 @@ project(CosmicChess)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Ajoute SDL2 et SDL_ttf avec pkg-config
+# Ajoute SDL3 et SDL3_ttf avec pkg-config
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(SDL2 REQUIRED sdl2)
-pkg_check_modules(SDL2_TTF REQUIRED SDL2_ttf)
-include_directories(${SDL2_INCLUDE_DIRS} ${SDL2_TTF_INCLUDE_DIRS})
+find_package(SDL3 REQUIRED)
+find_package(SDL3_ttf REQUIRED)
+include_directories(${SDL3_INCLUDE_DIRS} ${SDL3_TTF_INCLUDE_DIRS})
 
-# Sources (sans InputHandler temporairement)
+# Utilise des chemins relatifs basés sur CMAKE_SOURCE_DIR
+include_directories(${CMAKE_SOURCE_DIR}/include)
+link_directories(${CMAKE_SOURCE_DIR}/lib) # Si tu as des libs locales, sinon supprime cette ligne
+
+# Sources
 set(SOURCES
     src/main.cpp
     src/core/Board.cpp
@@ -28,14 +32,11 @@ set(SOURCES
     asm/popcount.asm
 )
 
-# Inclure les headers
-include_directories(include)
-
 # Cible executable
 add_executable(CosmicChess ${SOURCES})
 
-# Link SDL2 et SDL_ttf
-target_link_libraries(CosmicChess ${SDL2_LIBRARIES} ${SDL2_TTF_LIBRARIES})
+# Link SDL3 et SDL3_ttf
+target_link_libraries(CosmicChess SDL3::SDL3 SDL3_ttf::SDL3_ttf)
 
 # Option debug
 set(CMAKE_BUILD_TYPE Debug)

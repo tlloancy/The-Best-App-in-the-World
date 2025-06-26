@@ -5,35 +5,38 @@
 #include <iostream>
 #include <thread>
 #include <chrono>
+#include "../include/utils/Logger.hpp"
 
 int main() {
-    Logger::log("Starting main");
+    Logger::log("Starting application");
+    if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0) {
+        Logger::log("SDL_InitSubSystem failed: " + std::string(SDL_GetError()));
+        return 1;
+    }
     Board board;
     Renderer renderer;
     auto search = std::make_unique<MinimaxSearch>();
     Logger::log("Renderer and search initialized");
     bool isWhiteTurn = true;
+    bool running = true;
 
-    while (!renderer.shouldClose()) {
-        Logger::log("Entering render loop");
+    while (running) {
         renderer.renderBoard(board);
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEMOTION || event.type == SDL_MOUSEBUTTONUP) {
-                int x, y;
-                SDL_GetMouseState(&x, &y);
-                renderer.handleEvents(x, y, event.type, board);
-            }
-            if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_r) { // Reset avec 'r'
-                board = Board();
-                isWhiteTurn = true;
+            float x, y;
+            SDL_GetMouseState(&x, &y);
+            Logger::log("Mouse event at x: " + std::to_string(x) + ", y: " + std::to_string(y) + ", type: " + std::to_string(event.type));
+            renderer.handleEvents(event, board);
+            if (event.type == SDL_EVENT_QUIT || (event.type == SDL_EVENT_KEY_DOWN && (event.key.key == SDLK_ESCAPE || event.key.key == SDLK_Q))) {
+                running = false;
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(16)); // Limite à 60 FPS
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
         int error = 0;
-        if (error != 0) std::cerr << "SDL Error: " << SDL_GetError() << std::endl;
-        Logger::log("Loop iteration complete");
+        if (error != 0) std::cerr << "SDL Error: " + std::string(SDL_GetError()) << std::endl;
     }
-    Logger::log("Exiting main");
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    Logger::log("Exiting application");
     return 0;
 }

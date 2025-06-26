@@ -1,17 +1,22 @@
 #include "../../include/core/Piece.hpp"
+#include "../../include/utils/Logger.hpp"
 
 Bitboard PieceFactory::generatePawnMoves(Bitboard board, uint8_t square) {
     Bitboard moves = 0;
     int row = square / 8;
     Color color = (row < 4) ? Color::White : Color::Black;
     int direction = (color == Color::White) ? 8 : -8;
-    if ((row > 0 && row < 7) && !(board & Bitboard(1ULL << (square + direction)))) {
+    Logger::log("Generating moves for pawn at " + std::to_string(square) + ", row: " + std::to_string(row) + ", color: " + (color == Color::White ? "White" : "Black"));
+    if (row > 0 && row < 7 && !(board & Bitboard(1ULL << (square + direction)))) {
+        Logger::log("Adding simple move to " + std::to_string(square + direction));
         moves |= Bitboard(1ULL << (square + direction)); // Avance simple
         if ((row == 1 && color == Color::White && !(board & (Bitboard(1ULL << (square + 8)) | Bitboard(1ULL << (square + 16))))) ||
             (row == 6 && color == Color::Black && !(board & (Bitboard(1ULL << (square - 8)) | Bitboard(1ULL << (square - 16)))))) {
+            Logger::log("Adding double move to " + std::to_string(square + 2 * direction));
             moves |= Bitboard(1ULL << (square + 2 * direction)); // Double avance
         }
     }
+    Logger::log("Pawn moves for " + std::to_string(square) + ": " + std::to_string(moves));
     // Captures (à implémenter)
     return moves;
 }
