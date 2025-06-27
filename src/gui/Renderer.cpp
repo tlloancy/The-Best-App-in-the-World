@@ -4,25 +4,32 @@
 #include <chrono>
 #include <sstream>
 
+static SDL_HitTestResult SDLCALL hitTest(SDL_Window* window, const SDL_Point* pt, void* data) {
+    Renderer* renderer = static_cast<Renderer*>(data);
+    // Définir les limites du plateau (50-750, 100-600)
+    if (pt->x < 50 || pt->x > 750 || pt->y < 100 || pt->y > 600) {
+        if (renderer) renderer->logDebug("HIT-TEST: DRAGGABLE at " + std::to_string(pt->x) + ", " + std::to_string(pt->y));
+        return SDL_HITTEST_DRAGGABLE; // Déplacement en dehors du plateau
+    }
+    if (renderer) renderer->logDebug("HIT-TEST: NORMAL at " + std::to_string(pt->x) + ", " + std::to_string(pt->y));
+    return SDL_HITTEST_NORMAL; // Laisser les clics pour les pions
+}
+
 Renderer::Renderer() {
     if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0) {
         throw std::runtime_error("SDL_InitSubSystem failed: " + std::string(SDL_GetError()));
     }
-    window_ = SDL_CreateWindow("Cosmic Chess", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    window_ = SDL_CreateWindow("Cosmic Chess", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SDL_WINDOW_RESIZABLE);
     if (!window_) {
         SDL_QuitSubSystem(SDL_INIT_VIDEO);
         throw std::runtime_error("SDL_CreateWindow failed: " + std::string(SDL_GetError()));
     }
+    SDL_SetWindowSize(window_, 800, 600); // Taille explicite
     SDL_SetWindowBordered(window_, true);
-    SDL_SetWindowSize(window_, 800, 600); // Forcer une taille explicite
     Uint32 flags = SDL_GetWindowFlags(window_);
-    if (!(flags & SDL_WINDOW_RESIZABLE) || (flags & SDL_WINDOW_BORDERLESS)) {
-        logDebug("Warning: Window flags issue - Resizable: " + std::to_string(flags & SDL_WINDOW_RESIZABLE) + ", Borderless: " + std::to_string(flags & SDL_WINDOW_BORDERLESS));
-        SDL_SetWindowBordered(window_, true);
-    } else {
-        logDebug("Window flags: " + std::to_string(flags));
-    }
-    renderer_ = SDL_CreateRenderer(window_, NULL); // Renderer par défaut
+    logDebug("Window flags: " + std::to_string(flags));
+    SDL_SetWindowHitTest(window_, hitTest, this); // Passer l'instance Renderer
+    renderer_ = SDL_CreateRenderer(window_, NULL);
     if (!renderer_) {
         SDL_DestroyWindow(window_);
         SDL_QuitSubSystem(SDL_INIT_VIDEO);
@@ -49,7 +56,7 @@ Renderer::Renderer() {
     lastUpdate_ = std::chrono::steady_clock::now();
     lastMoveTime_ = std::chrono::steady_clock::now();
     debugEnabled_ = false; // Logs désactivés par défaut
-    Logger::log("SDL3 and TTF initialized successfully");
+    std::cout << "SDL3 and TTF initialized successfully" << std::endl; // Remplacement temporaire de Logger
 }
 
 Renderer::~Renderer() {
@@ -60,11 +67,11 @@ Renderer::~Renderer() {
     if (cursorClosed_) SDL_DestroyCursor(cursorClosed_);
     TTF_Quit();
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
-    Logger::log("SDL3 and TTF cleaned up");
+    std::cout << "SDL3 and TTF cleaned up" << std::endl; // Remplacement temporaire de Logger
 }
 
 void Renderer::renderBoard(const Board& board, bool isWhiteTurn) {
-    SDL_SetRenderDrawColor(renderer_, 30, 30, 30, 255); // Fond sombre élégant
+    SDL_SetRenderDrawColor(renderer_, 30, 30, 30, 255); // Fond sombre
     SDL_RenderClear(renderer_);
 
     // Plateau avec bordures subtiles
@@ -152,12 +159,8 @@ void Renderer::renderBoard(const Board& board, bool isWhiteTurn) {
     }
 
     logDebug("Before SDL_RenderPresent");
-    if (renderer_ && SDL_GetCurrentRenderOutputSize(renderer_, NULL, NULL) == 0) {
-        logDebug("Renderer output size invalid, forcing update");
-        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
-        SDL_RenderClear(renderer_);
-    }
     SDL_RenderPresent(renderer_);
+    SDL_UpdateWindowSurface(window_); // Forcer l'affichage
     logDebug("After SDL_RenderPresent");
 }
 
@@ -252,7 +255,7 @@ void Renderer::handleEvents(const SDL_Event& event, Board& board, bool& isWhiteT
     } else if (eventType == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_D) {
         debugEnabled_ = !debugEnabled_;
         if (debugEnabled_) logDebug("Debug toggled to: true");
-        else Logger::log("Debug toggled to: false");
+        else std::cout << "Debug toggled to: false" << std::endl; // Remplacement temporaire
     }
 }
 
@@ -272,7 +275,7 @@ void Renderer::updateCursor(bool isDragging) {
 }
 
 void Renderer::logDebug(const std::string& message) {
-    if (debugEnabled_) Logger::log(message);
+    if (debugEnabled_) std::cout << message << std::endl; // Remplacement temporaire de Logger
 }
 
 bool Renderer::isKeyPressed(int key) const {
