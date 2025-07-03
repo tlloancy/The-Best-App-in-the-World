@@ -1,33 +1,31 @@
-#pragma once
-#include <vector>
-#include <memory>
-#include <variant>
+#ifndef BOARD_HPP
+#define BOARD_HPP
+
+#include <array>
 #include "Piece.hpp"
 #include "../utils/Bitboard.hpp"
 
 class Board {
 public:
-    Board() { initialize(); }
-    void initialize();
-
-    template<typename Func>
-    void forEachPiece(Func&& func) const {
-        for (const auto& piece : pieces_) {
-            if (piece) func(*piece);
-        }
-    }
-
-    using PieceVariant = std::variant<std::monostate, std::unique_ptr<Piece>>;
-    void mutatePiece(uint8_t square, PieceType newType, Color color) {
-        pieces_[square] = PieceFactory::create(newType, color);
-    }
-
-    Bitboard getOccupied() const { return occupied_; }
-    const auto& getPieces() const { return pieces_; }
+    Board();
+    Board(const Board& other);
+    ~Board();
+    Bitboard getOccupied() const;
+    const std::array<Piece*, 64>& getPieces() const;
     bool movePiece(uint8_t from, uint8_t to);
+    bool isCheck() const;
+    bool isCheckmate() const;
+    bool isStalemate() const;
+    bool isDraw() const;
+    bool isWhiteToMove() const { return whiteToMove_; }
 
 private:
-    std::array<std::unique_ptr<Piece>, 64> pieces_;
+    std::array<Piece*, 64> pieces_;
     Bitboard occupied_;
-    Bitboard piecesByType[12];
+    bool whiteToMove_;
+    int enPassantTarget_;
+    int halfMoveClock_;
+    int fullMoveNumber_;
 };
+
+#endif

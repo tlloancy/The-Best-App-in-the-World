@@ -13,7 +13,7 @@ include_directories(${SDL3_INCLUDE_DIRS} ${SDL3_TTF_INCLUDE_DIRS})
 
 # Utilise des chemins relatifs basés sur CMAKE_SOURCE_DIR
 include_directories(${CMAKE_SOURCE_DIR}/include)
-link_directories(${CMAKE_SOURCE_DIR}/lib) # Si tu as des libs locales, sinon supprime cette ligne
+link_directories(${CMAKE_SOURCE_DIR}/lib)
 
 # Sources
 set(SOURCES
@@ -22,6 +22,12 @@ set(SOURCES
     src/core/Evaluator.cpp
     src/core/Move.cpp
     src/core/Piece.cpp
+    src/core/Pawn.cpp
+    src/core/Knight.cpp
+    src/core/Bishop.cpp
+    src/core/Rook.cpp
+    src/core/Queen.cpp
+    src/core/King.cpp
     src/engine/Dijkstra.cpp
     src/engine/MCTS.cpp
     src/engine/Search.cpp
@@ -36,7 +42,7 @@ set(SOURCES
 add_executable(CosmicChess ${SOURCES})
 
 # Link SDL3 et SDL3_ttf
-target_link_libraries(CosmicChess SDL3::SDL3 SDL3_ttf::SDL3_ttf)
+target_link_libraries(CosmicChess SDL3::SDL3 SDL3_ttf::SDL3_ttf m)
 
 # Option debug
 set(CMAKE_BUILD_TYPE Debug)
