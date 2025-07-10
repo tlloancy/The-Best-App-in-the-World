@@ -5,6 +5,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 #include <string>
 #include <chrono>
+#include <map>
 #include "../core/Board.hpp"
 
 class Renderer;
@@ -16,7 +17,7 @@ public:
     ~Renderer();
     void renderBoard(const Board& board, bool isWhiteTurn);
     void renderPiece(PieceType type, Color color, int x, int y);
-    void renderGameEnd(const std::string& message, const SDL_Color& color);
+    void renderGameEnd(const std::string& message, const SDL_Color& color, bool isQuitPrompt = false);
     void renderSpiral(float evaluation);
     void renderEvaluation(float eval);
     void renderTurnIndicator(bool isWhiteTurn);
@@ -39,12 +40,20 @@ private:
     SDL_Cursor* cursorOpen_ = nullptr;
     SDL_Cursor* cursorClosed_ = nullptr;
     int selectedSquare_ = -1;
+    int dragX_ = -1;
+    int dragY_ = -1;
     std::chrono::steady_clock::time_point lastUpdate_;
     std::chrono::steady_clock::time_point lastMoveTime_;
     float whiteTime_ = 600.0f;
     float blackTime_ = 600.0f;
-    bool debugEnabled_ = true; // Activer par défaut pour débogage
+    bool debugEnabled_ = true;
     bool lastStateChanged = false;
+    bool isDragging_ = false;
+    std::string basePath_;
+    std::map<std::pair<PieceType, Color>, SDL_Texture*> textureCache_;
+    bool quitPromptActive_ = false;
+    bool quitConfirmed_ = false;
+    Uint32 lastKeyPressTime_ = 0;
 };
 
 #endif
