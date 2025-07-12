@@ -1,26 +1,41 @@
-#include "../../include/gui/Renderer.hpp"
 #include "../../include/core/Knight.hpp"
+#include "../../include/core/Board.hpp"
 #include <iostream>
 
-Bitboard Knight::generateMoves(Bitboard occupied, int square) const {
-    Bitboard moves = Bitboard(0);
-    int displayRow = 7 - (square / 8);
-    int col = square % 8;
-    int knightMoves[8][2] = {{-2, -1}, {-2, 1}, {-1, -2}, {-1, 2}, {1, -2}, {1, 2}, {2, -1}, {2, 1}};
+Knight::Knight(Color c) : color_(c) {}
+
+PieceType Knight::getType() const {
+    return PieceType::Knight;
+}
+
+Color Knight::getColor() const {
+    return color_;
+}
+
+Bitboard Knight::generateMoves(const Board& board, int square) const {
+    return generateAttacks(board, square);
+}
+
+Bitboard Knight::generateAttacks(const Board& board, int square) const {
+    Bitboard attacks(0);
+    int rank = square / 8;
+    int file = square % 8;
+    Color ownColor = getColor();
+    int knightMoves[8][2] = {{2, 1}, {2, -1}, {-2, 1}, {-2, -1}, {1, 2}, {1, -2}, {-1, 2}, {-1, -2}};
 
     for (auto& move : knightMoves) {
-        int newDisplayRow = displayRow + move[0];
-        int newCol = col + move[1];
-        if (newDisplayRow >= 0 && newDisplayRow < 8 && newCol >= 0 && newCol < 8) {
-            int newSquare = (7 - newDisplayRow) * 8 + newCol;
-            moves |= Bitboard(1ULL << newSquare);
-            if (globalRenderer && globalRenderer->getDebugEnabled()) {
-                std::cout << "[DEBUG] Knight at " << square << " can move to " << newSquare << std::endl;
+        int newRank = rank + move[0];
+        int newFile = file + move[1];
+        if (newRank >= 0 && newRank < 8 && newFile >= 0 && newFile < 8) {
+            int newSquare = newRank * 8 + newFile;
+            if (!board.getPieces()[newSquare] || board.getPieces()[newSquare]->getColor() != ownColor) {
+                attacks.setBit(newSquare);
             }
         }
     }
-    if (globalRenderer && globalRenderer->getDebugEnabled()) {
-        std::cout << "[DEBUG] Knight moves for " << square << ": " << std::hex << moves.getValue() << std::dec << std::endl;
-    }
-    return moves;
+    return attacks;
+}
+
+Piece* Knight::clone() const {
+    return new Knight(*this);
 }

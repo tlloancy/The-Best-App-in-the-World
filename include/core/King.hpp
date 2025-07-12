@@ -2,19 +2,15 @@
 #define KING_HPP
 
 #include "Piece.hpp"
-#include "../utils/Bitboard.hpp"
 
 class King : public Piece {
 public:
-    King(const King& other) = default;
-    King(Color c) : color_(c) {}
-    virtual ~King() = default;
-    King& operator=(const King& other) = default;
-    Color getColor() const override { return color_; }
-    PieceType getType() const override { return PieceType::King; }
-    Piece* clone() const override { return new King(*this); }
-    virtual Bitboard generateMoves(Bitboard occupied, int square) const;
-
+    King(Color c);
+    PieceType getType() const override;
+    Color getColor() const override;
+    Bitboard generateMoves(const Board& board, int square) const override;
+    Bitboard generateAttacks(const Board& board, int square) const override;
+    Piece* clone() const override;
 private:
     Color color_;
 };

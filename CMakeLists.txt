@@ -52,6 +52,32 @@ else()
     message(STATUS "SDL3_ttf found: ${SDL3_ttf_DIR}")
 endif()
 
+# Find Threads
+find_package(Threads REQUIRED)
+
+# Check for NASM and install if not found
+find_program(NASM_EXECUTABLE nasm)
+if(NOT NASM_EXECUTABLE)
+    message(STATUS "NASM not found, attempting to install...")
+    execute_process(
+        COMMAND sudo apt update
+        COMMAND sudo apt install -y nasm
+        RESULT_VARIABLE NASM_INSTALL_RESULT
+    )
+    if(NASM_INSTALL_RESULT EQUAL 0)
+        message(STATUS "NASM installed successfully")
+        find_program(NASM_EXECUTABLE nasm REQUIRED)
+    else()
+        message(FATAL_ERROR "Failed to install NASM. Please install it manually with 'sudo apt install nasm'.")
+    endif()
+endif()
+
+# Enable NASM
+enable_language(ASM_NASM)
+if(NOT CMAKE_ASM_NASM_COMPILER_LOADED)
+    message(FATAL_ERROR "NASM assembler not found even after installation attempt.")
+endif()
+
 # Include directories
 include_directories(${SDL3_INCLUDE_DIRS})
 include_directories(${SDL3_IMAGE_INCLUDE_DIR})
@@ -95,7 +121,7 @@ if(SDL3_ttf_FOUND AND TARGET SDL3_ttf::SDL3_ttf)
 else()
     target_link_libraries(CosmicChess PRIVATE ${SDL3_TTF_LIBRARY})
 endif()
-target_link_libraries(CosmicChess PRIVATE m)
+target_link_libraries(CosmicChess PRIVATE Threads::Threads m)
 
 # Set debug build
 set(CMAKE_BUILD_TYPE Debug)

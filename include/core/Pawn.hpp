@@ -2,19 +2,15 @@
 #define PAWN_HPP
 
 #include "Piece.hpp"
-#include "../utils/Bitboard.hpp"
 
 class Pawn : public Piece {
 public:
-    Pawn(const Pawn& other) = default;
-    Pawn(Color c) : color_(c) {}
-    virtual ~Pawn() = default;
-    Pawn& operator=(const Pawn& other) = default;
-    Color getColor() const override { return color_; }
-    PieceType getType() const override { return PieceType::Pawn; }
-    Piece* clone() const override { return new Pawn(*this); }
-    virtual Bitboard generateMoves(Bitboard occupied, int square) const;
-
+    Pawn(Color c);
+    PieceType getType() const override;
+    Color getColor() const override;
+    Bitboard generateMoves(const Board& board, int square) const override;
+    Bitboard generateAttacks(const Board& board, int square) const override;
+    Piece* clone() const override;
 private:
     Color color_;
 };

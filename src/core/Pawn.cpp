@@ -1,54 +1,56 @@
-#include "../../include/gui/Renderer.hpp"
 #include "../../include/core/Pawn.hpp"
+#include "../../include/core/Board.hpp"
 #include <iostream>
 
-Bitboard Pawn::generateMoves(Bitboard occupied, int square) const {
-    Bitboard moves = Bitboard(0);
-    int displayRow = 7 - (square / 8);
-    int col = square % 8;
-    Color color = getColor();
-    int direction = (color == Color::White) ? 8 : -8;
+Pawn::Pawn(Color c) : color_(c) {}
 
-    if (globalRenderer && globalRenderer->getDebugEnabled()) {
-        std::cout << "[DEBUG] Pawn at " << square << " (display row: " << displayRow << ", col: " << col << ") - occupied_: " << std::hex << occupied.getValue() << std::dec << std::endl;
-    }
+PieceType Pawn::getType() const {
+    return PieceType::Pawn;
+}
 
-    int advanceSquare = square + direction;
-    if (advanceSquare >= 0 && advanceSquare < 64) {
-        if (!(occupied & Bitboard(1ULL << advanceSquare))) {
-            moves |= Bitboard(1ULL << advanceSquare);
-            if (globalRenderer && globalRenderer->getDebugEnabled()) {
-                std::cout << "[DEBUG] Pawn at " << square << " can advance to " << advanceSquare << std::endl;
-            }
-            if (((displayRow == 6 && color == Color::White) || (displayRow == 1 && color == Color::Black)) &&
-                !(occupied & Bitboard(1ULL << (advanceSquare + direction)))) {
-                moves |= Bitboard(1ULL << (advanceSquare + direction));
-                if (globalRenderer && globalRenderer->getDebugEnabled()) {
-                    std::cout << "[DEBUG] Pawn at " << square << " can double advance to " << (advanceSquare + direction) << std::endl;
-                }
-            }
-        }
-    }
-    if (col > 0) {
-        int leftCapture = advanceSquare - 1;
-        if (leftCapture >= 0 && leftCapture < 64 && (occupied & Bitboard(1ULL << leftCapture))) {
-            moves |= Bitboard(1ULL << leftCapture);
-            if (globalRenderer && globalRenderer->getDebugEnabled()) {
-                std::cout << "[DEBUG] Pawn at " << square << " can capture left to " << leftCapture << std::endl;
+Color Pawn::getColor() const {
+    return color_;
+}
+
+Bitboard Pawn::generateMoves(const Board& board, int square) const {
+    Bitboard moves = generateAttacks(board, square);
+    int dir = (getColor() == Color::White) ? 8 : -8;
+    int startRank = (getColor() == Color::White) ? 1 : 6;
+    int rank = square / 8;
+    int file = square % 8;
+    int forward = square + dir;
+    if (forward >= 0 && forward < 64 && !board.getPieces()[forward]) {
+        moves.setBit(forward);
+        if (rank == startRank) {
+            int doubleForward = square + 2 * dir;
+            if (doubleForward >= 0 && doubleForward < 64 && !board.getPieces()[doubleForward]) {
+                moves.setBit(doubleForward);
             }
         }
-    }
-    if (col < 7) {
-        int rightCapture = advanceSquare + 1;
-        if (rightCapture >= 0 && rightCapture < 64 && (occupied & Bitboard(1ULL << rightCapture))) {
-            moves |= Bitboard(1ULL << rightCapture);
-            if (globalRenderer && globalRenderer->getDebugEnabled()) {
-                std::cout << "[DEBUG] Pawn at " << square << " can capture right to " << rightCapture << std::endl;
-            }
-        }
-    }
-    if (globalRenderer && globalRenderer->getDebugEnabled()) {
-        std::cout << "[DEBUG] Pawn moves for " << square << ": " << std::hex << moves.getValue() << std::dec << std::endl;
     }
     return moves;
+}
+
+Bitboard Pawn::generateAttacks(const Board& board, int square) const {
+    Bitboard attacks(0);
+    int dir = (getColor() == Color::White) ? 8 : -8;
+    int rank = square / 8;
+    int file = square % 8;
+    int attackDirs[2] = {dir - 1, dir + 1};
+    Color opponent = (getColor() == Color::White) ? Color::Black : Color::White;
+    for (int attackDir : attackDirs) {
+        int attackSquare = square + attackDir;
+        if (attackSquare >= 0 && attackSquare < 64 && std::abs((attackSquare % 8) - file) == 1) {
+            if (board.getPieces()[attackSquare] && board.getPieces()[attackSquare]->getColor() == opponent) {
+                attacks.setBit(attackSquare);
+            } else if (attackSquare == board.getEnPassantSquare()) {
+                attacks.setBit(attackSquare);
+            }
+        }
+    }
+    return attacks;
+}
+
+Piece* Pawn::clone() const {
+    return new Pawn(*this);
 }

@@ -2,19 +2,15 @@
 #define QUEEN_HPP
 
 #include "Piece.hpp"
-#include "../utils/Bitboard.hpp"
 
 class Queen : public Piece {
 public:
-    Queen(const Queen& other) = default;
-    Queen(Color c) : color_(c) {}
-    virtual ~Queen() = default;
-    Queen& operator=(const Queen& other) = default;
-    Color getColor() const override { return color_; }
-    PieceType getType() const override { return PieceType::Queen; }
-    Piece* clone() const override { return new Queen(*this); }
-    virtual Bitboard generateMoves(Bitboard occupied, int square) const;
-
+    Queen(Color c);
+    PieceType getType() const override;
+    Color getColor() const override;
+    Bitboard generateMoves(const Board& board, int square) const override;
+    Bitboard generateAttacks(const Board& board, int square) const override;
+    Piece* clone() const override;
 private:
     Color color_;
 };

@@ -1,7 +1,13 @@
-#pragma once
+#ifndef MCTS_HPP
+#define MCTS_HPP
+
 #include "../core/Board.hpp"
+#include "../core/Move.hpp"
+#include "../engine/Search.hpp"
 
 class MCTS {
 public:
-    float evaluate(const Board& board, int iterations);
+    SearchResult evaluate(const Board& board, int iterations);
 };
+
+#endif

@@ -14,9 +14,11 @@ public:
     Bitboard operator|(const Bitboard& other) const { return Bitboard(value_ | other.value_); }
     Bitboard operator~() const { return Bitboard(~value_); }
     bool operator!=(const Bitboard& other) const { return value_ != other.value_; }
-    explicit operator bool() const { return value_ != 0; } // Conversion implicite vers bool
-    uint64_t getValue() const { return value_; } // Méthode pour accéder à value_
-
+    explicit operator bool() const { return value_ != 0; }
+    uint64_t getValue() const { return value_; }
+    void setBit(int bit) { value_ |= (1ULL << bit); }
+    bool testBit(int bit) const { return (value_ & (1ULL << bit)) != 0; }
+    int popcount() const;
 private:
     uint64_t value_;
 };
