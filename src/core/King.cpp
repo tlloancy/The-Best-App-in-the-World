@@ -77,7 +77,3 @@ Bitboard King::generateAttacks(const Board& board, int square) const {
     }
     return attacks;
 }
-
-Piece* King::clone() const {
-    return new King(*this);
-}

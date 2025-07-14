@@ -1,4 +1,5 @@
 #include "../../include/gui/Renderer.hpp"
+#include "../../include/utils/Convert.hpp"
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
 #include <SDL3_image/SDL_image.h>
@@ -10,6 +11,16 @@
 #include <random>
 #include <algorithm>
 #include <filesystem>
+#include <cmath>
+
+// Define AI_DEBUG to enable AI-specific debug output
+#define AI_DEBUG
+
+#ifdef AI_DEBUG
+#define AI_LOG(msg) std::cerr << "[AI_DEBUG] " << msg << std::endl
+#else
+#define AI_LOG(msg)
+#endif
 
 constexpr int SQUARE_SIZE_X = 87;
 constexpr int SQUARE_SIZE_Y = 62;
@@ -72,6 +83,12 @@ Renderer::Renderer(int width, int height, bool debug) : debugEnabled_(debug), wi
     loadPieceTextures();
     logDebug("SDL3 and SDL_image initialized successfully");
     gameOver_ = false;
+    std::mt19937 gen(std::random_device{}());
+    std::uniform_real_distribution<float> distX(0.0f, static_cast<float>(windowWidth_));
+    std::uniform_real_distribution<float> distY(0.0f, static_cast<float>(windowHeight_));
+    for (int i = 0; i < 200; ++i) {
+        stars_.push_back({distX(gen), distY(gen)});
+    }
 }
 
 Renderer::~Renderer() {
@@ -86,30 +103,51 @@ Renderer::~Renderer() {
     if (cursorClosed_) SDL_DestroyCursor(cursorClosed_);
     SDL_DestroyRenderer(renderer_);
     SDL_DestroyWindow(window_);
+    SDL_Quit();
 }
 
 bool Renderer::shouldClose() const {
     return quitConfirmed_;
 }
 
-void Renderer::updateSearchResult(const Board& board) {
-    if (!aiThreadRunning_ && isAIActive_) {
+void Renderer::updateSearchResult(const Board& board, bool isWhiteTurn) {
+    if (!aiThreadRunning_ && isAIActive_ && !isWhiteTurn && std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - lastAIMoveTime_).count() > 7000) {
+        AI_LOG("Starting AI search thread, using Stockfish: " + std::to_string(useStockfish_));
+        if (aiThread_.joinable()) {
+            aiThreadRunning_ = false;
+            aiThread_.join();
+            AI_LOG("Previous AI thread joined");
+        }
         aiThreadRunning_ = true;
-        aiThread_ = std::thread([this, board]() {
-            MCTSSearch search;
-            SearchResult result = search.search(board, 3);
+        static MCTSSearch mctsSearch(10);
+        aiThread_ = std::thread([this, board, isWhiteTurn, &mctsSearch]() {
+            SearchResult result;
+            std::string uciMove;
+            if (useStockfish_) {
+                AI_LOG("Launching StockfishSearch for depth 10");
+                StockfishSearch search(10);
+                result = search.search(board, 10);
+                uciMove = "";
+            } else {
+                AI_LOG("Launching MCTSSearch for depth 3");
+                result = mctsSearch.search(board, 3, &uciMove);
+            }
             std::lock_guard<std::mutex> lock(searchMutex_);
             lastSearchResult_ = result;
             searchResultValid_ = true;
             aiThreadRunning_ = false;
+            AI_LOG("AI search completed, score: " + std::to_string(result.score) + ", best move: " + uciMove);
         });
-        aiThread_.detach();
+    } else {
+        AI_LOG("AI search not started: running=" + std::to_string(aiThreadRunning_) + ", active=" + std::to_string(isAIActive_) + ", whiteTurn=" + std::to_string(isWhiteTurn));
     }
 }
 
 void Renderer::renderBoard(Board& board, bool& isWhiteTurn) {
     SDL_SetRenderDrawColor(renderer_, 30, 30, 30, 255);
     SDL_RenderClear(renderer_);
+    SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
+    SDL_RenderPoints(renderer_, stars_.data(), stars_.size());
     renderChessboard();
     renderPieces(board);
     renderTime(board, isWhiteTurn);
@@ -127,125 +165,30 @@ void Renderer::renderBoard(Board& board, bool& isWhiteTurn) {
     }
     auto now = std::chrono::steady_clock::now();
     std::chrono::duration<float> elapsed = now - lastUpdate_;
-    if (elapsed.count() >= 1.0f) {
-        if (isWhiteTurn && !quitPromptActive_) whiteTime_ -= 1;
-        else if (!isWhiteTurn && !quitPromptActive_) blackTime_ -= 1;
+    if (elapsed.count() >= 1.0f && !gameOver_ && !quitPromptActive_) {
+        if (isWhiteTurn) whiteTime_ -= 1;
+        else blackTime_ -= 1;
         lastUpdate_ = now;
     }
     if (whiteTime_ < 0) whiteTime_ = 0;
     if (blackTime_ < 0) blackTime_ = 0;
-    if (isAIActive_ && !isWhiteTurn && !searchResultValid_) {
-        updateSearchResult(board);
+    if (isAIActive_ && !isWhiteTurn && !aiThreadRunning_ && !searchResultValid_ && !justAIMoved_ && std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAIMoveTime_).count() > 7000) {
+        updateSearchResult(board, isWhiteTurn);
     }
-    std::lock_guard<std::mutex> lock(searchMutex_);
-    if (searchResultValid_) renderEvaluation(lastSearchResult_);
-    auto currentTime = std::chrono::steady_clock::now();
-    if (isAIActive_ && !isWhiteTurn && !justAIMoved_ && std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - lastAIMoveTime_).count() > 1000) {
-        std::thread aiMoveThread([this, &board, &isWhiteTurn]() {
-            makeAIMove(board, isWhiteTurn);
-        });
-        aiMoveThread.detach();
+    if (searchResultValid_ && isAIActive_ && !isWhiteTurn && !justAIMoved_ && std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAIMoveTime_).count() > 7000) {
+        AI_LOG("Applying AI move in main thread");
+        makeAIMove(board, isWhiteTurn);
         justAIMoved_ = true;
-        lastAIMoveTime_ = currentTime;
+        lastAIMoveTime_ = now;
         searchResultValid_ = false;
+        renderChessboard();
+        renderPieces(board);
+        SDL_RenderPresent(renderer_);
+    }
+    if (searchResultValid_) {
+        renderEvaluation(lastSearchResult_);
     }
     SDL_RenderPresent(renderer_);
-}
-
-void Renderer::handleEvents(SDL_Event& event, Board& board, bool& isWhiteTurn) {
-    Uint32 currentTime = SDL_GetTicks();
-    if (event.type == SDL_EVENT_QUIT) {
-        logDebug("Quit event received");
-        quitPromptActive_ = true;
-    } else if (event.type == SDL_EVENT_WINDOW_RESIZED) {
-        windowWidth_ = event.window.data1;
-        windowHeight_ = event.window.data2;
-        logDebug("Window resized to " + std::to_string(windowWidth_) + "x" + std::to_string(windowHeight_));
-    } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
-        if (currentTime - lastKeyPressTime_ < 300) return;
-        lastKeyPressTime_ = currentTime;
-        if (event.key.key == SDLK_ESCAPE || event.key.key == SDLK_Q) {
-            logDebug("Escape or Q key pressed");
-            quitPromptActive_ = true;
-        } else if (quitPromptActive_) {
-            if (event.key.key == SDLK_Y) {
-                logDebug("Y key pressed, confirming quit");
-                quitConfirmed_ = true;
-            } else if (event.key.key == SDLK_N) {
-                logDebug("N key pressed, canceling quit");
-                quitPromptActive_ = false;
-            }
-        } else if (event.key.key == SDLK_A) {
-            isAIActive_ = !isAIActive_;
-            logDebug("A key pressed, AI active: " + std::to_string(isAIActive_));
-            if (isAIActive_) {
-                searchResultValid_ = false;
-                if (!isWhiteTurn) updateSearchResult(board);
-            } else if (aiThreadRunning_) {
-                aiThreadRunning_ = false;
-                if (aiThread_.joinable()) aiThread_.join();
-            }
-        } else if (event.key.key == SDLK_F) {
-            isBoardFlipped_ = !isBoardFlipped_;
-            logDebug("F key pressed, board flipped: " + std::to_string(isBoardFlipped_));
-            searchResultValid_ = false;
-        } else if (gameOver_ && event.key.key == SDLK_N) {
-            board = Board();
-            isWhiteTurn = true;
-            gameOver_ = false;
-            searchResultValid_ = false;
-            whiteTime_ = 600.0f;
-            blackTime_ = 600.0f;
-            logDebug("New game started");
-        }
-    } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT && !gameOver_) {
-        int x = event.button.x;
-        int y = event.button.y;
-        int square = getSquareFromCoords(x, y);
-        if (square != -1 && board.getPieces()[square] && board.getPieces()[square]->getColor() == (isWhiteTurn ? Color::White : Color::Black)) {
-            setSelectedSquare(square);
-            isDragging_ = true;
-            dragX_ = x;
-            dragY_ = y;
-            updateCursor(true);
-            if (debugEnabled_) logDebug("Mouse down, type: " + std::to_string(event.type) + ", x=" + std::to_string(x) + ", y=" + std::to_string(y) + ", square: " + std::to_string(square));
-            logDebug("Selected square: " + std::to_string(square) + ", piece type: " + std::to_string(static_cast<int>(board.getPieces()[square]->getType())));
-            Bitboard validMoves = board.getPieces()[square]->generateMoves(board, square);
-            logDebug("Valid moves for " + std::to_string(square) + ": " + std::to_string(validMoves.getValue()));
-            justAIMoved_ = false;
-        } else if (debugEnabled_) {
-            logDebug("Mouse down ignored: square=" + std::to_string(square) + ", piece=" + (square != -1 && board.getPieces()[square] ? std::to_string(static_cast<int>(board.getPieces()[square]->getColor())) : "none"));
-        }
-    } else if (event.type == SDL_EVENT_MOUSE_MOTION && isDragging_) {
-        int x = event.motion.x;
-        int y = event.motion.y;
-        dragX_ = x;
-        dragY_ = y;
-        updateCursor(true);
-        logDebug("Dragging, mouse at x=" + std::to_string(x) + ", y=" + std::to_string(y));
-    } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT && isDragging_) {
-        int x = event.button.x;
-        int y = event.button.y;
-        int to = getSquareFromCoords(x, y);
-        logDebug("Mouse up, type: " + std::to_string(event.type) + ", x=" + std::to_string(x) + ", y=" + std::to_string(y) + ", square: " + std::to_string(to));
-        if (to != -1) {
-            Bitboard validMoves = board.getPieces()[selectedSquare_]->generateMoves(board, selectedSquare_);
-            logDebug("Checking move from " + std::to_string(selectedSquare_) + " to " + std::to_string(to) + ", valid moves: " + std::to_string(validMoves.getValue()));
-            if (validMoves.testBit(to) && board.movePiece(selectedSquare_, to)) {
-                isWhiteTurn = !isWhiteTurn;
-                logDebug("Move from " + std::to_string(selectedSquare_) + " to " + std::to_string(to) + " successful");
-                searchResultValid_ = false;
-                if (isAIActive_ && !isWhiteTurn) updateSearchResult(board);
-            } else {
-                logDebug("Invalid move to " + std::to_string(to) + ": " + (validMoves.testBit(to) ? "movePiece failed" : "not in valid moves list"));
-            }
-        }
-        isDragging_ = false;
-        dragX_ = -1;
-        dragY_ = -1;
-        updateCursor(false);
-        setSelectedSquare(-1);
-    }
 }
 
 int Renderer::getSquareFromCoords(int x, int y) const {
@@ -262,10 +205,26 @@ void Renderer::setSelectedSquare(int square) {
     selectedSquare_ = square;
 }
 
+void Renderer::logDebug(const std::string& message) const {
+    if (debugEnabled_) std::cout << message << std::endl;
+}
+
+void Renderer::updateCursor(bool isDragging) {
+    SDL_SetCursor(isDragging ? cursorClosed_ : cursorOpen_);
+}
+
 void Renderer::renderChessboard() {
+    Uint32 time = SDL_GetTicks();
+    float t = time / 1000.0f;
     for (int i = 0; i < 8; ++i) {
         for (int j = 0; j < 8; ++j) {
-            SDL_SetRenderDrawColor(renderer_, (i + j + 1) % 2 ? 200 : 150, (i + j + 1) % 2 ? 180 : 120, (i + j + 1) % 2 ? 160 : 100, 255);
+            int baseR = (i + j) % 2 ? 100 : 50;
+            int baseG = (i + j) % 2 ? 150 : 100;
+            int baseB = (i + j) % 2 ? 200 : 150;
+            int r = baseR + 30 * std::sin(t + i + j);
+            int g = baseG + 30 * std::cos(t + i - j);
+            int b = baseB + 30 * std::sin(t - i + j);
+            SDL_SetRenderDrawColor(renderer_, r, g, b, 255);
             SDL_FRect rect = {static_cast<float>(BOARD_OFFSET_X + i * SQUARE_SIZE_X), static_cast<float>(BOARD_OFFSET_Y + j * SQUARE_SIZE_Y), static_cast<float>(SQUARE_SIZE_X), static_cast<float>(SQUARE_SIZE_Y)};
             SDL_RenderFillRect(renderer_, &rect);
         }
@@ -273,6 +232,16 @@ void Renderer::renderChessboard() {
     SDL_SetRenderDrawColor(renderer_, 200, 200, 200, 255);
     SDL_FRect borderRect = {static_cast<float>(BOARD_OFFSET_X), static_cast<float>(BOARD_OFFSET_Y), static_cast<float>(8 * SQUARE_SIZE_X), static_cast<float>(8 * SQUARE_SIZE_Y)};
     SDL_RenderRect(renderer_, &borderRect);
+    if (selectedSquare_ != -1) {
+        int file = selectedSquare_ % 8;
+        int rank = 7 - (selectedSquare_ / 8);
+        Uint8 alpha = 100 + 80 * std::sin(t * 2) * 0.5 + 0.5;
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, 255, 255, 0, alpha);
+        SDL_FRect glowRect = {static_cast<float>(BOARD_OFFSET_X + file * SQUARE_SIZE_X - 5), static_cast<float>(BOARD_OFFSET_Y + rank * SQUARE_SIZE_Y - 5), static_cast<float>(SQUARE_SIZE_X + 10), static_cast<float>(SQUARE_SIZE_Y + 10)};
+        SDL_RenderFillRect(renderer_, &glowRect);
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    }
 }
 
 void Renderer::loadPieceTextures() {
@@ -376,7 +345,12 @@ void Renderer::renderEvaluation(const SearchResult& result) {
         }
         SDL_DestroySurface(evalSurface);
     }
-    SDL_SetRenderDrawColor(renderer_, result.score > 0 ? 50 : 200, result.score > 0 ? 200 : 50, 100, 100);
+    Uint32 time = SDL_GetTicks();
+    float t = time / 1000.0f;
+    Uint8 barR = result.score > 0 ? 50 + 50 * std::sin(t) : 200;
+    Uint8 barG = result.score > 0 ? 200 : 50 + 50 * std::cos(t);
+    Uint8 barB = 100;
+    SDL_SetRenderDrawColor(renderer_, barR, barG, barB, 100);
     SDL_FRect bar = {50.0f, EVAL_BAR_Y + 20, 700.0f * std::min(std::abs(result.score) / 10.0f, 1.0f), 20.0f};
     SDL_RenderFillRect(renderer_, &bar);
     for (size_t i = 0; i < result.topMoves.size() && i < 3; ++i) {
@@ -396,21 +370,133 @@ void Renderer::renderEvaluation(const SearchResult& result) {
 }
 
 void Renderer::makeAIMove(Board& board, bool& isWhiteTurn) {
-    Color color = isWhiteTurn ? Color::White : Color::Black;
-    MCTSSearch search;
-    SearchResult result = search.search(board, 3);
-    if (result.bestMove.from != result.bestMove.to) {
-        if (board.movePiece(result.bestMove.from, result.bestMove.to)) {
-            isWhiteTurn = !isWhiteTurn;
-            logDebug("AI move from " + std::to_string(result.bestMove.from) + " to " + std::to_string(result.bestMove.to));
-        }
+    if (!searchResultValid_) {
+        AI_LOG("No valid search result for AI move");
+        return;
+    }
+    AI_LOG("Attempting AI move from " + std::to_string(lastSearchResult_.bestMove.from) + " to " + std::to_string(lastSearchResult_.bestMove.to));
+    if (!board.getPieces()[lastSearchResult_.bestMove.from]) {
+        AI_LOG("AI move failed: no piece at from position " + std::to_string(lastSearchResult_.bestMove.from));
+        return;
+    }
+    AI_LOG("Piece at from position " + std::to_string(lastSearchResult_.bestMove.from) + " is valid");
+    if (board.getPieces()[lastSearchResult_.bestMove.from]->getColor() != Color::Black) {
+        AI_LOG("AI move failed: piece at from position " + std::to_string(lastSearchResult_.bestMove.from) + " is not black");
+        return;
+    }
+    AI_LOG("Piece color at from position is black");
+    Bitboard validMoves = board.getPieces()[lastSearchResult_.bestMove.from]->generateMoves(board, lastSearchResult_.bestMove.from);
+    if (!validMoves.testBit(lastSearchResult_.bestMove.to)) {
+        AI_LOG("AI move failed: move from " + std::to_string(lastSearchResult_.bestMove.from) + " to " + std::to_string(lastSearchResult_.bestMove.to) + " is not valid, valid moves: " + std::to_string(validMoves.getValue()));
+        return;
+    }
+    AI_LOG("Move from " + std::to_string(lastSearchResult_.bestMove.from) + " to " + std::to_string(lastSearchResult_.bestMove.to) + " is valid");
+    if (board.movePiece(lastSearchResult_.bestMove.from, lastSearchResult_.bestMove.to)) {
+        isWhiteTurn = !isWhiteTurn;
+        AI_LOG("AI move from " + std::to_string(lastSearchResult_.bestMove.from) + " to " + std::to_string(lastSearchResult_.bestMove.to) + " successful");
+    } else {
+        AI_LOG("AI move from " + std::to_string(lastSearchResult_.bestMove.from) + " to " + std::to_string(lastSearchResult_.bestMove.to) + " failed: movePiece returned false");
     }
 }
 
-void Renderer::updateCursor(bool isDragging) {
-    SDL_SetCursor(isDragging ? cursorClosed_ : cursorOpen_);
-}
-
-void Renderer::logDebug(const std::string& message) const {
-    if (debugEnabled_) std::cout << message << std::endl;
+void Renderer::handleEvents(SDL_Event& event, Board& board, bool& isWhiteTurn) {
+    if (event.type == SDL_EVENT_QUIT) {
+        logDebug("Quit event received");
+        quitPromptActive_ = true;
+    } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+        if (event.key.key == SDLK_ESCAPE || event.key.key == SDLK_Q) {
+            logDebug("Escape or Q key pressed");
+            quitPromptActive_ = true;
+        } else if (quitPromptActive_) {
+            if (event.key.key == SDLK_Y) {
+                logDebug("Y key pressed, confirming quit");
+                quitConfirmed_ = true;
+            } else if (event.key.key == SDLK_N) {
+                logDebug("N key pressed, canceling quit");
+                quitPromptActive_ = false;
+            }
+        } else if (event.key.key == SDLK_A) {
+            isAIActive_ = !isAIActive_;
+            AI_LOG("A key pressed, AI active: " + std::to_string(isAIActive_));
+            if (isAIActive_ && !isWhiteTurn && !aiThreadRunning_) {
+                searchResultValid_ = false;
+                AI_LOG("Triggering AI search for black's turn");
+                updateSearchResult(board, isWhiteTurn);
+            } else if (!isAIActive_ && aiThreadRunning_) {
+                aiThreadRunning_ = false;
+                if (aiThread_.joinable()) aiThread_.join();
+                AI_LOG("AI thread stopped");
+            }
+        } else if (event.key.key == SDLK_F) {
+            isBoardFlipped_ = !isBoardFlipped_;
+            logDebug("F key pressed, board flipped: " + std::to_string(isBoardFlipped_));
+            searchResultValid_ = false;
+        } else if (event.key.key == SDLK_S) {
+            useStockfish_ = !useStockfish_;
+            logDebug("S key pressed, using Stockfish: " + std::to_string(useStockfish_));
+            searchResultValid_ = false;
+            if (isAIActive_ && !isWhiteTurn && !aiThreadRunning_) {
+                AI_LOG("Triggering new AI search after engine switch");
+                updateSearchResult(board, isWhiteTurn);
+            }
+        } else if (gameOver_ && event.key.key == SDLK_N) {
+            board = Board();
+            isWhiteTurn = true;
+            gameOver_ = false;
+            searchResultValid_ = false;
+            whiteTime_ = 600.0f;
+            blackTime_ = 600.0f;
+            logDebug("New game started");
+        }
+    } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT && !gameOver_) {
+        int x = event.button.x;
+        int y = event.button.y;
+        int square = getSquareFromCoords(x, y);
+        if (square != -1 && board.getPieces()[square] && board.getPieces()[square]->getColor() == (isWhiteTurn ? Color::White : Color::Black)) {
+            setSelectedSquare(square);
+            isDragging_ = true;
+            dragX_ = x;
+            dragY_ = y;
+            updateCursor(true);
+            if (debugEnabled_) logDebug("Mouse down, x=" + std::to_string(x) + ", y=" + std::to_string(y) + ", square=" + std::to_string(square));
+            logDebug("Selected square: " + std::to_string(square) + ", piece type: " + std::to_string(static_cast<int>(board.getPieces()[square]->getType())));
+            Bitboard validMoves = board.getPieces()[square]->generateMoves(board, square);
+            logDebug("Valid moves for " + std::to_string(square) + ": " + std::to_string(validMoves.getValue()));
+            justAIMoved_ = false;
+        } else if (debugEnabled_) {
+            logDebug("Mouse down ignored: square=" + std::to_string(square) + ", piece=" + (square != -1 && board.getPieces()[square] ? std::to_string(static_cast<int>(board.getPieces()[square]->getColor())) : "none"));
+        }
+    } else if (event.type == SDL_EVENT_MOUSE_MOTION && isDragging_) {
+        int x = event.motion.x;
+        int y = event.motion.y;
+        dragX_ = x;
+        dragY_ = y;
+        updateCursor(true);
+        logDebug("Dragging, mouse at x=" + std::to_string(x) + ", y=" + std::to_string(y));
+    } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT && isDragging_) {
+        int x = event.button.x;
+        int y = event.button.y;
+        int to = getSquareFromCoords(x, y);
+        logDebug("Mouse up, x=" + std::to_string(x) + ", y=" + std::to_string(y) + ", square=" + std::to_string(to));
+        if (to != -1) {
+            Bitboard validMoves = board.getPieces()[selectedSquare_]->generateMoves(board, selectedSquare_);
+            logDebug("Checking move from " + std::to_string(selectedSquare_) + " to " + std::to_string(to) + ", valid moves: " + std::to_string(validMoves.getValue()));
+            if (validMoves.testBit(to) && board.movePiece(selectedSquare_, to)) {
+                isWhiteTurn = !isWhiteTurn;
+                logDebug("Move from " + std::to_string(selectedSquare_) + " to " + std::to_string(to) + " successful");
+                searchResultValid_ = false;
+                if (isAIActive_ && !isWhiteTurn && !aiThreadRunning_) {
+                    AI_LOG("Player move made, triggering AI search for black's turn");
+                    updateSearchResult(board, isWhiteTurn);
+                }
+            } else {
+                logDebug("Invalid move to " + std::to_string(to) + ": " + (validMoves.testBit(to) ? "movePiece failed" : "not in valid moves list"));
+            }
+        }
+        isDragging_ = false;
+        dragX_ = -1;
+        dragY_ = -1;
+        updateCursor(false);
+        setSelectedSquare(-1);
+    }
 }

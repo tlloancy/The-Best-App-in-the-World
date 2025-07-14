@@ -7,6 +7,7 @@
 #include "../../include/core/King.hpp"
 #include <iostream>
 #include <vector>
+#include <sstream>
 
 constexpr int WHITE_KING_START = 4;
 constexpr int BLACK_KING_START = 60;
@@ -236,4 +237,49 @@ float Board::evaluate() const {
         }
     }
     return score;
+}
+
+std::string Board::getFEN() const {
+    std::ostringstream fen;
+    for (int rank = 7; rank >= 0; --rank) {
+        int empty = 0;
+        for (int file = 0; file < 8; ++file) {
+            int sq = rank * 8 + file;
+            if (!pieces_[sq]) {
+                ++empty;
+            } else {
+                if (empty > 0) {
+                    fen << empty;
+                    empty = 0;
+                }
+                char c;
+                switch (pieces_[sq]->getType()) {
+                    case PieceType::Pawn: c = 'p'; break;
+                    case PieceType::Knight: c = 'n'; break;
+                    case PieceType::Bishop: c = 'b'; break;
+                    case PieceType::Rook: c = 'r'; break;
+                    case PieceType::Queen: c = 'q'; break;
+                    case PieceType::King: c = 'k'; break;
+                }
+                if (pieces_[sq]->getColor() == Color::White) c = std::toupper(c);
+                fen << c;
+            }
+        }
+        if (empty > 0) fen << empty;
+        if (rank > 0) fen << '/';
+    }
+    fen << (isWhiteToMove_ ? " w " : " b ");
+    std::string castling;
+    if (whiteCanCastleKingside_) castling += "K";
+    if (whiteCanCastleQueenside_) castling += "Q";
+    if (blackCanCastleKingside_) castling += "k";
+    if (blackCanCastleQueenside_) castling += "q";
+    fen << (castling.empty() ? "-" : castling) << " ";
+    if (enPassantSquare_ != 64) {
+        char file = 'a' + (enPassantSquare_ % 8);
+        int r = 1 + (enPassantSquare_ / 8);
+        fen << file << r;
+    } else fen << "-";
+    fen << " " << halfmoveClock_ << " " << fullmoveNumber_;
+    return fen.str();
 }

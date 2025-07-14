@@ -41,7 +41,3 @@ Bitboard Queen::generateAttacks(const Board& board, int square) const {
     }
     return attacks;
 }
-
-Piece* Queen::clone() const {
-    return new Queen(*this);
-}

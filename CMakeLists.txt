@@ -78,6 +78,15 @@ if(NOT CMAKE_ASM_NASM_COMPILER_LOADED)
     message(FATAL_ERROR "NASM assembler not found even after installation attempt.")
 endif()
 
+include(FetchContent)
+set(FETCHCONTENT_QUIET FALSE)
+FetchContent_Declare(
+    stockfish
+    GIT_REPOSITORY https://github.com/official-stockfish/Stockfish.git
+    GIT_TAG sf_17.1
+)
+FetchContent_MakeAvailable(stockfish)
+
 # Include directories
 include_directories(${SDL3_INCLUDE_DIRS})
 include_directories(${SDL3_IMAGE_INCLUDE_DIR})
@@ -99,15 +108,22 @@ set(SOURCES
     src/engine/Dijkstra.cpp
     src/engine/MCTS.cpp
     src/engine/Search.cpp
+    src/engine/Stockfish.cpp
     src/gui/Renderer.cpp
     src/gui/Spiral.cpp
     src/utils/Bitboard.cpp
     src/utils/Logger.cpp
+    src/utils/Convert.cpp
     asm/popcount.asm
 )
 
 # Executable
 add_executable(CosmicChess ${SOURCES})
+add_custom_command(TARGET CosmicChess POST_BUILD
+    COMMAND make -C ${stockfish_SOURCE_DIR}/src build ARCH=x86-64 -j
+    COMMAND ${CMAKE_COMMAND} -E copy ${stockfish_SOURCE_DIR}/src/stockfish ${CMAKE_BINARY_DIR}/stockfish
+    COMMAND chmod +x ${CMAKE_BINARY_DIR}/stockfish
+)
 
 # Link libraries
 target_link_libraries(CosmicChess PRIVATE SDL3::SDL3)

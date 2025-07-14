@@ -41,7 +41,3 @@ Bitboard Rook::generateAttacks(const Board& board, int square) const {
     }
     return attacks;
 }
-
-Piece* Rook::clone() const {
-    return new Rook(*this);
-}

@@ -33,7 +33,7 @@ public:
     bool canCastleBlackKingside() const { return blackCanCastleKingside_; }
     bool canCastleBlackQueenside() const { return blackCanCastleQueenside_; }
     void performMove(uint8_t from, uint8_t to);
-
+    std::string getFEN() const;
 private:
     std::array<std::unique_ptr<Piece>, 64> pieces_;
     bool isWhiteToMove_ = true;

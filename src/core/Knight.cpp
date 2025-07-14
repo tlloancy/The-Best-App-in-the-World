@@ -35,7 +35,3 @@ Bitboard Knight::generateAttacks(const Board& board, int square) const {
     }
     return attacks;
 }
-
-Piece* Knight::clone() const {
-    return new Knight(*this);
-}

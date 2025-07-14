@@ -1,16 +1,11 @@
 #ifndef SEARCH_HPP
 #define SEARCH_HPP
 
-#include <concepts>
-#include <functional>
+#include "../../include/core/Board.hpp"
+#include "../../include/core/Move.hpp"
 #include <vector>
-#include "../core/Board.hpp"
-#include "../core/Move.hpp"
-
-template<typename T>
-concept SearchAlgorithm = requires(T t, const Board& board, int depth) {
-    { t.search(board, depth) } -> std::convertible_to<float>;
-};
+#include <string>
+#include <cstdio>
 
 struct SearchResult {
     float score;
@@ -20,26 +15,22 @@ struct SearchResult {
 
 class Search {
 public:
-    virtual ~Search() = default;
     virtual SearchResult search(const Board& board, int depth) = 0;
+    virtual ~Search() = default;
 };
 
-template<typename Derived>
-class SearchBase : public Search {
+class StockfishSearch : public Search {
 public:
-    SearchResult search(const Board& board, int depth) override {
-        return static_cast<Derived*>(this)->impl_search(board, depth);
-    }
-};
-
-class MinimaxSearch : public SearchBase<MinimaxSearch> {
-public:
-    SearchResult impl_search(const Board& board, int depth);
-};
-
-class MCTSSearch : public SearchBase<MCTSSearch> {
-public:
-    SearchResult impl_search(const Board& board, int depth);
+    StockfishSearch(int skillLevel = 10);
+    ~StockfishSearch();
+    SearchResult search(const Board& board, int depth) override;
+private:
+    void startStockfish();
+    std::string getBestMoveFromStockfish(const Board& board);
+    int skillLevel_;
+    FILE* writePipe_ = nullptr;
+    FILE* readPipe_ = nullptr;
+    pid_t childPid_ = -1;
 };
 
 #endif

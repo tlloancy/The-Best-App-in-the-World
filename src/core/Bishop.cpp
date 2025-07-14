@@ -41,7 +41,3 @@ Bitboard Bishop::generateAttacks(const Board& board, int square) const {
     }
     return attacks;
 }
-
-Piece* Bishop::clone() const {
-    return new Bishop(*this);
-}

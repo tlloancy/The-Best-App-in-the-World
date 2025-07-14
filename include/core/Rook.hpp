@@ -10,7 +10,7 @@ public:
     Color getColor() const override;
     Bitboard generateMoves(const Board& board, int square) const override;
     Bitboard generateAttacks(const Board& board, int square) const override;
-    Piece* clone() const override;
+    Piece* clone() const override { return new Rook(*this); }
 private:
     Color color_;
 };

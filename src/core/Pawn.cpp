@@ -50,7 +50,3 @@ Bitboard Pawn::generateAttacks(const Board& board, int square) const {
     }
     return attacks;
 }
-
-Piece* Pawn::clone() const {
-    return new Pawn(*this);
-}
