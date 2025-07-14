@@ -30,8 +30,9 @@ constexpr int FONT_SIZE = 24;
 constexpr int BOLD_FONT_SIZE = 48;
 constexpr int WHITE_TIME_Y = 10;
 constexpr int BLACK_TIME_Y = 40;
+constexpr int EVAL_BAR_X = 800;
 constexpr int EVAL_BAR_Y = 70;
-constexpr int TOP_MOVES_Y = 100;
+constexpr int TOP_MOVES_Y = 20;
 constexpr int TIME_DISPLAY_HEIGHT = 30;
 constexpr int NAV_BUTTON_Y = 600;
 constexpr int NAV_BUTTON_W = 50;
@@ -151,7 +152,7 @@ Renderer::Renderer(int width, int height, bool debug) : debugEnabled_(debug), wi
     }
     renderLoadingScreen(0.0f);
     auto start = std::chrono::steady_clock::now();
-    float estimatedDuration = 5.0f; // seconds
+    float estimatedDuration = 5.0f;
     aiInitialized_ = false;
     std::thread initThread([&]() {
         try {
@@ -170,7 +171,7 @@ Renderer::Renderer(int width, int height, bool debug) : debugEnabled_(debug), wi
         std::chrono::duration<float> elapsed = now - start;
         float progress = std::min(elapsed.count() / estimatedDuration, 1.0f);
         renderLoadingScreen(progress);
-        SDL_Delay(50); // Update every 50ms for smooth animation
+        SDL_Delay(50);
         if (aiInitialized_ || elapsed.count() >= 10.0f) {
             if (initThread.joinable()) {
                 initThread.join();
@@ -189,6 +190,10 @@ Renderer::~Renderer() {
     if (aiThreadRunning_) {
         aiThreadRunning_ = false;
         if (aiThread_.joinable()) aiThread_.join();
+    }
+    if (evalThreadRunning_) {
+        evalThreadRunning_ = false;
+        if (evalThread_.joinable()) evalThread_.join();
     }
     if (mctsSearch_) delete mctsSearch_;
     if (font_) TTF_CloseFont(font_);
@@ -224,6 +229,7 @@ void Renderer::updateSearchResult(const Board& board, bool isWhiteTurn) {
         aiThread_ = std::thread([this, board, isWhiteTurn]() {
             try {
                 SearchResult result;
+                std::vector<SearchResult> topResults;
                 std::string uciMove;
                 if (useStockfish_) {
                     AI_LOG("Launching StockfishSearch for depth 10");
@@ -232,24 +238,68 @@ void Renderer::updateSearchResult(const Board& board, bool isWhiteTurn) {
                     uciMove = "";
                 } else if (mctsSearch_) {
                     AI_LOG("Launching MCTSSearch for depth 3");
-                    result = mctsSearch_->search(board, 3, &uciMove);
+                    result = mctsSearch_->search(board, 3, &uciMove, nullptr);
                 } else {
                     AI_LOG("MCTSSearch is null, cannot perform search");
+                    result.score = 0.1f;
+                    result.bestMove = {0, 0};
+                    topResults.clear();
                     aiThreadRunning_ = false;
                     return;
                 }
                 std::lock_guard<std::mutex> lock(searchMutex_);
                 lastSearchResult_ = result;
+                topSearchResults_ = topResults;
                 searchResultValid_ = true;
                 aiThreadRunning_ = false;
                 AI_LOG("AI search completed, score: " + std::to_string(result.score) + ", best move: " + uciMove);
             } catch (const std::exception& e) {
                 AI_LOG("Exception in AI search thread: " + std::string(e.what()));
+                std::lock_guard<std::mutex> lock(searchMutex_);
+                lastSearchResult_.score = 0.1f;
+                lastSearchResult_.bestMove = {0, 0};
+                topSearchResults_.clear();
+                searchResultValid_ = false;
                 aiThreadRunning_ = false;
             }
         });
-    } else {
-        AI_LOG("AI search not started: running=" + std::to_string(aiThreadRunning_) + ", active=" + std::to_string(isAIActive_) + ", whiteTurn=" + std::to_string(isWhiteTurn));
+    }
+    if (!evalThreadRunning_ && showEvaluation_) {
+        if (evalThread_.joinable()) {
+            evalThreadRunning_ = false;
+            try {
+                evalThread_.join();
+                AI_LOG("Previous eval thread joined");
+            } catch (const std::exception& e) {
+                AI_LOG("Exception in joining eval thread: " + std::string(e.what()));
+            }
+        }
+        evalThreadRunning_ = true;
+        evalThread_ = std::thread([this, board]() {
+            try {
+                MCTS mcts;
+                SearchResult evalResult = mcts.evaluate(board, 100);
+                std::vector<SearchResult> topResults;
+                for (const auto& move : evalResult.topMoves) {
+                    std::string moveUci = std::string(1, 'a' + (move.from % 8)) + 
+                                          std::to_string(8 - (move.from / 8)) +
+                                          std::string(1, 'a' + (move.to % 8)) +
+                                          std::to_string(8 - (move.to / 8));
+                    SearchResult sr;
+                    sr.score = evalResult.score;
+                    sr.bestMove = move;
+                    sr.topMoves = {};
+                    topResults.push_back(sr);
+                }
+                std::lock_guard<std::mutex> lock(searchMutex_);
+                topSearchResults_ = topResults;
+                evalThreadRunning_ = false;
+                AI_LOG("Evaluation thread completed, top moves updated");
+            } catch (const std::exception& e) {
+                AI_LOG("Exception in evaluation thread: " + std::string(e.what()));
+                evalThreadRunning_ = false;
+            }
+        });
     }
 }
 
@@ -287,7 +337,9 @@ void Renderer::renderBoard(Board& board, bool& isWhiteTurn) {
     }
     if (whiteTime_ < 0) whiteTime_ = 0;
     if (blackTime_ < 0) blackTime_ = 0;
-    renderEvaluation(lastSearchResult_);
+    if (showEvaluation_) {
+        renderEvaluation(lastSearchResult_, topSearchResults_);
+    }
     if (isAIActive_ && !isWhiteTurn && !aiThreadRunning_ && !searchResultValid_ && !justAIMoved_) {
         updateSearchResult(board, isWhiteTurn);
     }
@@ -468,30 +520,36 @@ void Renderer::renderGameEnd(const std::string& message, const SDL_Color& color,
     }
 }
 
-void Renderer::renderEvaluation(const SearchResult& result) {
+void Renderer::renderEvaluation(const SearchResult& result, const std::vector<SearchResult>& topResults) {
     static float lastScore = -9999.0f;
-    static bool lastValid = false;
-    if (!font_) {
+    static float displayedScore = 0.0f;
+    if (!font_ || !boldFont_) {
         logDebug("Font is null in renderEvaluation");
         return;
     }
+    Uint32 time = SDL_GetTicks();
+    float t = time / 1000.0f;
+    float targetScore = result.score;
+    displayedScore += (targetScore - displayedScore) * 0.1f;
     std::string evalStr = "0.0";
-    if (searchResultValid_) {
-        if (result.score >= 1000.0f) evalStr = "M" + std::to_string(static_cast<int>(result.score / 1000));
-        else if (result.score <= -1000.0f) evalStr = "-M" + std::to_string(static_cast<int>(-result.score / 1000));
-        else evalStr = (result.score >= 0 ? "+" : "") + std::to_string(result.score).substr(0, 4);
+    if (std::abs(displayedScore) >= 1000.0f) {
+        evalStr = (displayedScore >= 0 ? "M" : "-M") + std::to_string(static_cast<int>(std::abs(displayedScore) / 1000));
+    } else {
+        evalStr = (displayedScore >= 0 ? "+" : "") + std::to_string(displayedScore).substr(0, 4);
     }
-    if (result.score != lastScore || searchResultValid_ != lastValid) {
-        AI_LOG("Rendering evaluation: " + evalStr);
-        lastScore = result.score;
-        lastValid = searchResultValid_;
-    }
-    SDL_Color whiteColor = {255, 255, 255, 255};
-    SDL_Surface* evalSurface = TTF_RenderText_Blended(font_, evalStr.c_str(), evalStr.length(), whiteColor);
+    AI_LOG("Rendering evaluation: " + evalStr);
+    SDL_Color neonColor = {static_cast<Uint8>(displayedScore >= 0 ? 100 : 255), static_cast<Uint8>(displayedScore >= 0 ? 255 : 0), static_cast<Uint8>(displayedScore >= 0 ? 200 : 0), static_cast<Uint8>(180 + 75 * std::sin(t * 2))};
+    SDL_Surface* evalSurface = TTF_RenderText_Blended(boldFont_, evalStr.c_str(), evalStr.length(), neonColor);
     if (evalSurface) {
         SDL_Texture* evalTexture = SDL_CreateTextureFromSurface(renderer_, evalSurface);
         if (evalTexture) {
-            SDL_FRect evalRect = {750.0f, EVAL_BAR_Y, static_cast<float>(evalSurface->w), static_cast<float>(evalSurface->h)};
+            SDL_SetTextureAlphaMod(evalTexture, neonColor.a);
+            SDL_FRect evalRect = {static_cast<float>(EVAL_BAR_X), static_cast<float>(EVAL_BAR_Y - evalSurface->h - 10), static_cast<float>(evalSurface->w), static_cast<float>(evalSurface->h)};
+            SDL_FRect shadowRect = {evalRect.x + 4, evalRect.y + 4, evalRect.w, evalRect.h};
+            SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 100);
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+            SDL_RenderTexture(renderer_, evalTexture, NULL, &shadowRect);
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
             SDL_RenderTexture(renderer_, evalTexture, NULL, &evalRect);
             SDL_DestroyTexture(evalTexture);
         } else {
@@ -501,14 +559,43 @@ void Renderer::renderEvaluation(const SearchResult& result) {
     } else {
         logDebug("Failed to render evaluation text: " + std::string(SDL_GetError()));
     }
-    float eval = searchResultValid_ ? result.score : 0.0f;
-    float barHeight = std::min(std::abs(eval) / 10.0f, 1.0f) * 400.0f;
+    float eval = displayedScore;
+    float barHeight = std::min(std::abs(eval) / 10.0f, 1.0f) * 200.0f;
     SDL_SetRenderDrawColor(renderer_, 128, 128, 128, 255);
-    SDL_FRect bgBar = {750.0f, 100.0f, 20.0f, 400.0f};
+    SDL_FRect bgBar = {static_cast<float>(EVAL_BAR_X), EVAL_BAR_Y - 200.0f, 20.0f, 400.0f};
     SDL_RenderFillRect(renderer_, &bgBar);
-    SDL_SetRenderDrawColor(renderer_, eval >= 0 ? 255 : 0, eval >= 0 ? 255 : 0, eval >= 0 ? 255 : 0, 255);
-    SDL_FRect evalBar = {750.0f, eval >= 0 ? 500.0f - barHeight : 100.0f, 20.0f, barHeight};
+    SDL_SetRenderDrawColor(renderer_, static_cast<Uint8>(eval >= 0 ? 100 : 255), static_cast<Uint8>(eval >= 0 ? 255 : 0), static_cast<Uint8>(eval >= 0 ? 200 : 0), 255);
+    SDL_FRect evalBar = {static_cast<float>(EVAL_BAR_X), eval >= 0 ? EVAL_BAR_Y - barHeight : EVAL_BAR_Y, 20.0f, barHeight};
     SDL_RenderFillRect(renderer_, &evalBar);
+    for (size_t i = 0; i < std::min(topResults.size(), size_t(3)); ++i) {
+        Move move = topResults[i].bestMove;
+        std::string moveStr = std::string(1, 'a' + (move.from % 8)) + 
+                              std::to_string(8 - (move.from / 8)) +
+                              std::string(1, 'a' + (move.to % 8)) +
+                              std::to_string(8 - (move.to / 8));
+        float moveScore = topResults[i].score;
+        std::string moveText = std::to_string(i + 1) + ". " + moveStr + " (" + (moveScore >= 1000.0f ? "M" + std::to_string(static_cast<int>(moveScore / 1000)) : (moveScore <= -1000.0f ? "-M" + std::to_string(static_cast<int>(-moveScore / 1000)) : (moveScore >= 0 ? "+" : "") + std::to_string(moveScore).substr(0, 4))) + ")";
+        SDL_Surface* moveSurface = TTF_RenderText_Blended(font_, moveText.c_str(), moveText.length(), neonColor);
+        if (moveSurface) {
+            SDL_Texture* moveTexture = SDL_CreateTextureFromSurface(renderer_, moveSurface);
+            if (moveTexture) {
+                SDL_SetTextureAlphaMod(moveTexture, neonColor.a);
+                SDL_FRect moveRect = {static_cast<float>(EVAL_BAR_X), static_cast<float>(TOP_MOVES_Y + i * 50), static_cast<float>(moveSurface->w), static_cast<float>(moveSurface->h)};
+                SDL_FRect moveShadowRect = {moveRect.x + 2, moveRect.y + 2, moveRect.w, moveRect.h};
+                SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 100);
+                SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+                SDL_RenderTexture(renderer_, moveTexture, NULL, &moveShadowRect);
+                SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+                SDL_RenderTexture(renderer_, moveTexture, NULL, &moveRect);
+                SDL_DestroyTexture(moveTexture);
+            } else {
+                logDebug("Failed to create texture for top move " + std::to_string(i + 1) + ": " + std::string(SDL_GetError()));
+            }
+            SDL_DestroySurface(moveSurface);
+        } else {
+            logDebug("Failed to render top move text " + std::to_string(i + 1) + ": " + std::string(SDL_GetError()));
+        }
+    }
 }
 
 void Renderer::renderNavigationButtons() {
@@ -620,6 +707,14 @@ void Renderer::handleEvents(SDL_Event& event, Board& board, bool& isWhiteTurn) {
             if (isAIActive_ && !isWhiteTurn && !aiThreadRunning_) {
                 AI_LOG("Triggering new AI search after engine switch");
                 updateSearchResult(board, isWhiteTurn);
+            }
+        } else if (event.key.key == SDLK_E) {
+            showEvaluation_ = !showEvaluation_;
+            logDebug("E key pressed, evaluation display: " + std::to_string(showEvaluation_));
+            if (!showEvaluation_ && evalThreadRunning_) {
+                evalThreadRunning_ = false;
+                if (evalThread_.joinable()) evalThread_.join();
+                AI_LOG("Evaluation thread stopped");
             }
         } else if (gameOver_ && event.key.key == SDLK_N) {
             board = Board();

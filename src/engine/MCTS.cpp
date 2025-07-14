@@ -1,8 +1,6 @@
 #include "../../include/engine/MCTS.hpp"
 #include "../../include/core/Evaluator.hpp"
 #include "../../include/utils/Convert.hpp"
-#include <random>
-#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
@@ -12,6 +10,8 @@
 #include <sys/select.h>
 #include <signal.h>
 #include <chrono>
+#include <random>
+#include <cmath>
 
 // Define AI_DEBUG to enable AI-specific debug output (comment out to disable)
 #define AI_DEBUG
@@ -125,13 +125,12 @@ SearchResult MCTS::evaluate(const Board& board, int iterations) {
         for (size_t i = 0; i < scoredChildren.size() && i < 3; ++i) {
             result.topMoves.push_back(scoredChildren[i].first->move);
         }
-        AI_LOG("MCTS evaluation completed, best move: " + 
-               std::string(1, 'a' + (result.bestMove.from % 8)) + std::to_string(8 - (result.bestMove.from / 8)) + "-" + 
+        AI_LOG("MCTS evaluation completed, best move: " +
+               std::string(1, 'a' + (result.bestMove.from % 8)) + std::to_string(8 - (result.bestMove.from / 8)) + "-" +
                std::string(1, 'a' + (result.bestMove.to % 8)) + std::to_string(8 - (result.bestMove.to / 8)) + ", score: " + std::to_string(result.score));
     } else {
         AI_LOG("No valid moves found in MCTS evaluation");
     }
-
     delete root;
     return result;
 }
@@ -300,7 +299,7 @@ std::string MCTSSearch::getBestMoveFromStockfish(const Board& board) {
     char buf[256];
     std::string bestMove;
     int readAttempts = 0;
-    auto maxDuration = std::chrono::milliseconds(5000); // 5s timeout
+    auto maxDuration = std::chrono::milliseconds(5000);
     while (readAttempts++ < 200) {
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - start) > maxDuration) {
@@ -315,7 +314,7 @@ std::string MCTSSearch::getBestMoveFromStockfish(const Board& board) {
                 childPid_ = -1;
             }
             startStockfish();
-            break;
+            return "";
         }
         fd_set readfds;
         FD_ZERO(&readfds);
@@ -356,6 +355,7 @@ std::string MCTSSearch::getBestMoveFromStockfish(const Board& board) {
             childPid_ = -1;
         }
         startStockfish();
+        return "";
     }
     if (bestMove.empty()) {
         AI_LOG("No valid move received from Stockfish");
@@ -365,13 +365,28 @@ std::string MCTSSearch::getBestMoveFromStockfish(const Board& board) {
     return bestMove;
 }
 
-SearchResult MCTSSearch::search(const Board& board, int depth, std::string* uciMove) {
+SearchResult MCTSSearch::search(const Board& board, int depth, std::string* uciMove, std::vector<SearchResult>* topResults) {
     AI_LOG("Starting MCTSSearch::search with depth " + std::to_string(depth) + " for FEN: " + board.getFEN());
     std::string uci = getBestMoveFromStockfish(board);
     if (uci.empty()) {
         AI_LOG("No move from Stockfish, falling back to MCTS evaluation");
         MCTS mcts;
-        return mcts.evaluate(board, 100);
+        SearchResult result = mcts.evaluate(board, 100);
+        if (topResults) {
+            topResults->clear();
+            for (const auto& move : result.topMoves) {
+                std::string moveUci = std::string(1, 'a' + (move.from % 8)) + 
+                                      std::to_string(8 - (move.from / 8)) +
+                                      std::string(1, 'a' + (move.to % 8)) +
+                                      std::to_string(8 - (move.to / 8));
+                SearchResult sr;
+                sr.score = result.score;
+                sr.bestMove = move;
+                sr.topMoves = {};
+                topResults->push_back(sr);
+            }
+        }
+        return result;
     }
     if (uciMove) *uciMove = uci;
     Move bestMove = Convert::fromUCI(uci);
@@ -379,9 +394,23 @@ SearchResult MCTSSearch::search(const Board& board, int depth, std::string* uciM
     if (bestMove.from >= 64 || bestMove.to >= 64 || bestMove.from < 0 || bestMove.to < 0) {
         AI_LOG("Invalid move from Stockfish UCI: " + uci + ", falling back to MCTS evaluation");
         MCTS mcts;
-        return mcts.evaluate(board, 100);
+        SearchResult result = mcts.evaluate(board, 100);
+        if (topResults) {
+            topResults->clear();
+            for (const auto& move : result.topMoves) {
+                std::string moveUci = std::string(1, 'a' + (move.from % 8)) + 
+                                      std::to_string(8 - (move.from / 8)) +
+                                      std::string(1, 'a' + (move.to % 8)) +
+                                      std::to_string(8 - (move.to / 8));
+                SearchResult sr;
+                sr.score = result.score;
+                sr.bestMove = move;
+                sr.topMoves = {};
+                topResults->push_back(sr);
+            }
+        }
+        return result;
     }
-    // Verify move is legal
     auto legalMoves = board.getLegalMoves(Color::Black);
     bool isLegal = false;
     for (const auto& move : legalMoves) {
@@ -393,18 +422,57 @@ SearchResult MCTSSearch::search(const Board& board, int depth, std::string* uciM
     if (!isLegal) {
         AI_LOG("Stockfish move " + uci + " is not legal for black, falling back to MCTS evaluation");
         MCTS mcts;
-        return mcts.evaluate(board, 100);
+        SearchResult result = mcts.evaluate(board, 100);
+        if (topResults) {
+            topResults->clear();
+            for (const auto& move : result.topMoves) {
+                std::string moveUci = std::string(1, 'a' + (move.from % 8)) + 
+                                      std::to_string(8 - (move.from / 8)) +
+                                      std::string(1, 'a' + (move.to % 8)) +
+                                      std::to_string(8 - (move.to / 8));
+                SearchResult sr;
+                sr.score = result.score;
+                sr.bestMove = move;
+                sr.topMoves = {};
+                topResults->push_back(sr);
+            }
+        }
+        return result;
     }
     Board tempBoard(board);
     AI_LOG("Board before move: " + tempBoard.getFEN());
     if (!tempBoard.movePiece(bestMove.from, bestMove.to)) {
         AI_LOG("Stockfish move " + uci + " failed to apply, falling back to MCTS evaluation");
         MCTS mcts;
-        return mcts.evaluate(board, 100);
+        SearchResult result = mcts.evaluate(board, 100);
+        if (topResults) {
+            topResults->clear();
+            for (const auto& move : result.topMoves) {
+                std::string moveUci = std::string(1, 'a' + (move.from % 8)) + 
+                                      std::to_string(8 - (move.from / 8)) +
+                                      std::string(1, 'a' + (move.to % 8)) +
+                                      std::to_string(8 - (move.to / 8));
+                SearchResult sr;
+                sr.score = result.score;
+                sr.bestMove = move;
+                sr.topMoves = {};
+                topResults->push_back(sr);
+            }
+        }
+        return result;
     }
     AI_LOG("Board after move: " + tempBoard.getFEN());
     Evaluator evaluator;
     float score = evaluator.evaluate(tempBoard);
     AI_LOG("MCTSSearch completed, move: " + uci + ", score: " + std::to_string(score));
-    return {score, bestMove, {bestMove}};
+    SearchResult result = {score, bestMove, {bestMove}};
+    if (topResults) {
+        topResults->clear();
+        SearchResult sr;
+        sr.score = score;
+        sr.bestMove = bestMove;
+        sr.topMoves = {};
+        topResults->push_back(sr);
+    }
+    return result;
 }

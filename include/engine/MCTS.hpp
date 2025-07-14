@@ -17,7 +17,7 @@ class MCTSSearch {
 public:
     MCTSSearch(int skillLevel = 10);
     ~MCTSSearch();
-    SearchResult search(const Board& board, int depth, std::string* uciMove = nullptr);
+    SearchResult search(const Board& board, int depth, std::string* uciMove = nullptr, std::vector<SearchResult>* topResults = nullptr);
 private:
     void startStockfish();
     std::string getBestMoveFromStockfish(const Board& board);

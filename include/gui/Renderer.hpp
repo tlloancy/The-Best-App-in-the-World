@@ -49,8 +49,10 @@ private:
     bool isAIActive_ = false;
     bool isBoardFlipped_ = false;
     bool useStockfish_ = false;
+    bool showEvaluation_ = true;
     bool justAIMoved_ = false;
     SearchResult lastSearchResult_;
+    std::vector<SearchResult> topSearchResults_;
     bool searchResultValid_ = false;
     std::mutex searchMutex_;
     std::thread aiThread_;
@@ -60,6 +62,8 @@ private:
     std::pair<int, int> premove_ = {-1, -1};
     MCTSSearch* mctsSearch_ = nullptr;
     std::atomic<bool> aiInitialized_ = false;
+    std::thread evalThread_;
+    bool evalThreadRunning_ = false;
 
     void makeAIMove(Board& board, bool& isWhiteTurn);
     int getSquareFromCoords(int x, int y) const;
@@ -71,7 +75,7 @@ private:
     void renderPieces(const Board& board);
     void renderTime(const Board& board, bool isWhiteTurn);
     void renderGameEnd(const std::string& message, const SDL_Color& color, bool isQuitPrompt);
-    void renderEvaluation(const SearchResult& result);
+    void renderEvaluation(const SearchResult& result, const std::vector<SearchResult>& topResults);
     void renderNavigationButtons();
     void renderLoadingScreen(float progress);
     bool isPointInButton(int x, int y, int buttonX, int buttonY, int buttonW, int buttonH) const;
