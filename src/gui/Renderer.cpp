@@ -27,6 +27,7 @@ constexpr int SQUARE_SIZE_Y = 62;
 constexpr int BOARD_OFFSET_X = 50;
 constexpr int BOARD_OFFSET_Y = 100;
 constexpr int FONT_SIZE = 24;
+constexpr int BOLD_FONT_SIZE = 48;
 constexpr int WHITE_TIME_Y = 10;
 constexpr int BLACK_TIME_Y = 40;
 constexpr int EVAL_BAR_Y = 70;
@@ -46,6 +47,47 @@ static SDL_HitTestResult SDLCALL hitTest(SDL_Window* window, const SDL_Point* pt
         return SDL_HITTEST_DRAGGABLE;
     }
     return SDL_HITTEST_NORMAL;
+}
+
+void Renderer::renderLoadingScreen(float progress) {
+    SDL_SetRenderDrawColor(renderer_, 10, 10, 30, 255);
+    SDL_RenderClear(renderer_);
+    Uint32 time = SDL_GetTicks();
+    float t = time / 1000.0f;
+    for (const auto& star : stars_) {
+        Uint8 alpha = 180 + 75 * std::sin(t * 3 + star.x + star.y);
+        SDL_SetRenderDrawColor(renderer_, 200, 200, 255, alpha);
+        SDL_FRect starRect = {star.x, star.y, 2.0f, 2.0f};
+        SDL_RenderFillRect(renderer_, &starRect);
+    }
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer_, 20, 20, 60, 180);
+    SDL_FRect gradientRect = {0.0f, 0.0f, static_cast<float>(windowWidth_), static_cast<float>(windowHeight_)};
+    SDL_RenderFillRect(renderer_, &gradientRect);
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    SDL_Color neonColor = {100, 255, 200, static_cast<Uint8>(180 + 75 * std::sin(t * 2))};
+    std::string loadingText = "Initializing AI... " + std::to_string(static_cast<int>(progress * 100)) + "%";
+    SDL_Surface* surface = TTF_RenderText_Blended(boldFont_, loadingText.c_str(), loadingText.length(), neonColor);
+    if (surface) {
+        SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer_, surface);
+        if (texture) {
+            SDL_SetTextureAlphaMod(texture, neonColor.a);
+            SDL_FRect textRect = {static_cast<float>(windowWidth_ / 2 - surface->w / 2), 300.0f, static_cast<float>(surface->w), static_cast<float>(surface->h)};
+            SDL_FRect shadowRect = {textRect.x + 4, textRect.y + 4, textRect.w, textRect.h};
+            SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 100);
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+            SDL_RenderTexture(renderer_, texture, NULL, &shadowRect);
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+            SDL_RenderTexture(renderer_, texture, NULL, &textRect);
+            SDL_DestroyTexture(texture);
+        } else {
+            logDebug("Failed to create texture for loading screen: " + std::string(SDL_GetError()));
+        }
+        SDL_DestroySurface(surface);
+    } else {
+        logDebug("Failed to render loading text: " + std::string(SDL_GetError()));
+    }
+    SDL_RenderPresent(renderer_);
 }
 
 Renderer::Renderer(int width, int height, bool debug) : debugEnabled_(debug), windowWidth_(width), windowHeight_(height) {
@@ -70,11 +112,20 @@ Renderer::Renderer(int width, int height, bool debug) : debugEnabled_(debug), wi
         return;
     }
     font_ = TTF_OpenFont("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", FONT_SIZE);
+    boldFont_ = TTF_OpenFont("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", BOLD_FONT_SIZE);
     if (!font_) {
         logDebug("TTF_OpenFont failed for /usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf: " + std::string(SDL_GetError()));
         font_ = TTF_OpenFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", FONT_SIZE);
         if (!font_) {
             logDebug("TTF_OpenFont failed for /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf: " + std::string(SDL_GetError()));
+        }
+    }
+    if (!boldFont_) {
+        logDebug("TTF_OpenFont failed for /usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf: " + std::string(SDL_GetError()));
+        boldFont_ = TTF_OpenFont("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", BOLD_FONT_SIZE);
+        if (!boldFont_) {
+            logDebug("TTF_OpenFont failed for /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf: " + std::string(SDL_GetError()));
+            boldFont_ = font_;
         }
     }
     cursorOpen_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
@@ -92,18 +143,45 @@ Renderer::Renderer(int width, int height, bool debug) : debugEnabled_(debug), wi
     gameOver_ = false;
     moveHistory_.push_back(Board());
     historyIndex_ = 0;
-    try {
-        mctsSearch_ = new MCTSSearch(10);
-        AI_LOG("MCTSSearch initialized in Renderer constructor");
-    } catch (const std::exception& e) {
-        AI_LOG("Failed to initialize MCTSSearch: " + std::string(e.what()));
-        mctsSearch_ = nullptr;
-    }
     std::mt19937 gen(std::random_device{}());
     std::uniform_real_distribution<float> distX(0.0f, static_cast<float>(windowWidth_));
     std::uniform_real_distribution<float> distY(0.0f, static_cast<float>(windowHeight_));
     for (int i = 0; i < 200; ++i) {
         stars_.push_back({distX(gen), distY(gen)});
+    }
+    renderLoadingScreen(0.0f);
+    auto start = std::chrono::steady_clock::now();
+    float estimatedDuration = 5.0f; // seconds
+    aiInitialized_ = false;
+    std::thread initThread([&]() {
+        try {
+            mctsSearch_ = new MCTSSearch(10);
+            AI_LOG("MCTSSearch initialized in Renderer constructor");
+            aiInitialized_ = true;
+        } catch (const std::exception& e) {
+            AI_LOG("Failed to initialize MCTSSearch: " + std::string(e.what()));
+            mctsSearch_ = nullptr;
+            useStockfish_ = false;
+            aiInitialized_ = true;
+        }
+    });
+    while (!aiInitialized_) {
+        auto now = std::chrono::steady_clock::now();
+        std::chrono::duration<float> elapsed = now - start;
+        float progress = std::min(elapsed.count() / estimatedDuration, 1.0f);
+        renderLoadingScreen(progress);
+        SDL_Delay(50); // Update every 50ms for smooth animation
+        if (aiInitialized_ || elapsed.count() >= 10.0f) {
+            if (initThread.joinable()) {
+                initThread.join();
+                if (!mctsSearch_ && !useStockfish_) {
+                    AI_LOG("MCTSSearch initialization timed out or failed, using non-Stockfish search");
+                }
+                AI_LOG("AI initialization completed in " + std::to_string(elapsed.count()) + " seconds");
+                renderLoadingScreen(1.0f);
+                break;
+            }
+        }
     }
 }
 
@@ -114,6 +192,7 @@ Renderer::~Renderer() {
     }
     if (mctsSearch_) delete mctsSearch_;
     if (font_) TTF_CloseFont(font_);
+    if (boldFont_) TTF_CloseFont(boldFont_);
     for (auto& pair : textureCache_) SDL_DestroyTexture(pair.second);
     for (auto& pair : evalTextureCache_) SDL_DestroyTexture(pair.second);
     if (cursorOpen_) SDL_DestroyCursor(cursorOpen_);

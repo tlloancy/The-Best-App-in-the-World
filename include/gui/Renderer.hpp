@@ -12,6 +12,7 @@
 #include <vector>
 #include <thread>
 #include <mutex>
+#include <atomic>
 
 class Renderer {
 public:
@@ -29,6 +30,7 @@ private:
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
     TTF_Font* font_ = nullptr;
+    TTF_Font* boldFont_ = nullptr;
     SDL_Cursor* cursorOpen_ = nullptr;
     SDL_Cursor* cursorClosed_ = nullptr;
     std::string basePath_;
@@ -57,6 +59,7 @@ private:
     int historyIndex_ = -1;
     std::pair<int, int> premove_ = {-1, -1};
     MCTSSearch* mctsSearch_ = nullptr;
+    std::atomic<bool> aiInitialized_ = false;
 
     void makeAIMove(Board& board, bool& isWhiteTurn);
     int getSquareFromCoords(int x, int y) const;
@@ -70,6 +73,7 @@ private:
     void renderGameEnd(const std::string& message, const SDL_Color& color, bool isQuitPrompt);
     void renderEvaluation(const SearchResult& result);
     void renderNavigationButtons();
+    void renderLoadingScreen(float progress);
     bool isPointInButton(int x, int y, int buttonX, int buttonY, int buttonW, int buttonH) const;
 };
 
