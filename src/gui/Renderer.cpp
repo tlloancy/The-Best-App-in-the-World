@@ -92,6 +92,13 @@ Renderer::Renderer(int width, int height, bool debug) : debugEnabled_(debug), wi
     gameOver_ = false;
     moveHistory_.push_back(Board());
     historyIndex_ = 0;
+    try {
+        mctsSearch_ = new MCTSSearch(10);
+        AI_LOG("MCTSSearch initialized in Renderer constructor");
+    } catch (const std::exception& e) {
+        AI_LOG("Failed to initialize MCTSSearch: " + std::string(e.what()));
+        mctsSearch_ = nullptr;
+    }
     std::mt19937 gen(std::random_device{}());
     std::uniform_real_distribution<float> distX(0.0f, static_cast<float>(windowWidth_));
     std::uniform_real_distribution<float> distY(0.0f, static_cast<float>(windowHeight_));
@@ -105,6 +112,7 @@ Renderer::~Renderer() {
         aiThreadRunning_ = false;
         if (aiThread_.joinable()) aiThread_.join();
     }
+    if (mctsSearch_) delete mctsSearch_;
     if (font_) TTF_CloseFont(font_);
     for (auto& pair : textureCache_) SDL_DestroyTexture(pair.second);
     for (auto& pair : evalTextureCache_) SDL_DestroyTexture(pair.second);
@@ -134,8 +142,7 @@ void Renderer::updateSearchResult(const Board& board, bool isWhiteTurn) {
         aiThreadRunning_ = true;
         moveHistory_.push_back(board);
         historyIndex_ = moveHistory_.size() - 1;
-        static MCTSSearch mctsSearch(10);
-        aiThread_ = std::thread([this, board, isWhiteTurn, &mctsSearch]() {
+        aiThread_ = std::thread([this, board, isWhiteTurn]() {
             try {
                 SearchResult result;
                 std::string uciMove;
@@ -144,9 +151,13 @@ void Renderer::updateSearchResult(const Board& board, bool isWhiteTurn) {
                     StockfishSearch search(10);
                     result = search.search(board, 10);
                     uciMove = "";
-                } else {
+                } else if (mctsSearch_) {
                     AI_LOG("Launching MCTSSearch for depth 3");
-                    result = mctsSearch.search(board, 3, &uciMove);
+                    result = mctsSearch_->search(board, 3, &uciMove);
+                } else {
+                    AI_LOG("MCTSSearch is null, cannot perform search");
+                    aiThreadRunning_ = false;
+                    return;
                 }
                 std::lock_guard<std::mutex> lock(searchMutex_);
                 lastSearchResult_ = result;

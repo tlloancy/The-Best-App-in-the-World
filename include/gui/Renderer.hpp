@@ -56,6 +56,7 @@ private:
     std::vector<Board> moveHistory_;
     int historyIndex_ = -1;
     std::pair<int, int> premove_ = {-1, -1};
+    MCTSSearch* mctsSearch_ = nullptr;
 
     void makeAIMove(Board& board, bool& isWhiteTurn);
     int getSquareFromCoords(int x, int y) const;
