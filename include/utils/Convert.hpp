@@ -1,12 +1,10 @@
 #ifndef CONVERT_HPP
 #define CONVERT_HPP
 
-#include "../core/Move.hpp"
 #include <string>
+#include <utility>
 
-namespace Convert {
-    uint8_t squareFromAlg(const std::string& alg);
-    Move fromUCI(const std::string& uci);
-}
+uint8_t squareFromAlg(const std::string& alg);
+std::pair<int, int> fromUCI(const std::string& uci);
 
-#endif
+#endif // CONVERT_HPP

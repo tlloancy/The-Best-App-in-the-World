@@ -2,20 +2,19 @@
 #define SEARCH_HPP
 
 #include "../../include/core/Board.hpp"
-#include "../../include/core/Move.hpp"
 #include <vector>
 #include <string>
-#include <cstdio>
+#include <utility>
 
 struct SearchResult {
     float score;
-    Move bestMove;
-    std::vector<Move> topMoves;
+    std::pair<int, int> bestMove;
+    std::vector<std::pair<int, int>> topMoves;
 };
 
 class Search {
 public:
-    virtual SearchResult search(const Board& board, int depth) = 0;
+    virtual SearchResult search(const Board& board, int depth, std::string* uciMove = nullptr) = 0;
     virtual ~Search() = default;
 };
 
@@ -23,7 +22,7 @@ class StockfishSearch : public Search {
 public:
     StockfishSearch(int skillLevel = 10);
     ~StockfishSearch();
-    SearchResult search(const Board& board, int depth) override;
+    SearchResult search(const Board& board, int depth, std::string* uciMove = nullptr) override;
 private:
     void startStockfish();
     std::string getBestMoveFromStockfish(const Board& board);
@@ -33,4 +32,4 @@ private:
     pid_t childPid_ = -1;
 };
 
-#endif
+#endif // SEARCH_HPP

@@ -1,17 +1,16 @@
 #include "../../include/engine/Search.hpp"
 #include "../../include/utils/Convert.hpp"
-#include <iostream>
+#include <cstdio>
 #include <cstring>
 #include <unistd.h>
+#include <iostream>
 #include <errno.h>
 #include <sys/wait.h>
 #include <sys/select.h>
 #include <signal.h>
 #include <chrono>
 
-// Define AI_DEBUG to enable AI-specific debug output (comment out to disable)
 #define AI_DEBUG
-
 #ifdef AI_DEBUG
 #define AI_LOG(msg) std::cerr << "[AI_DEBUG] " << msg << std::endl
 #else
@@ -19,7 +18,7 @@
 #endif
 
 StockfishSearch::StockfishSearch(int skillLevel) : skillLevel_(skillLevel) {
-    AI_LOG("Initializing StockfishSearch with skill level " + std::to_string(skillLevel));
+    AI_LOG("Initializing StockfishSearch with skill level " + std::to_string(skillLevel_));
     startStockfish();
 }
 
@@ -56,7 +55,6 @@ void StockfishSearch::startStockfish() {
         AI_LOG("Failed to create pipes: " + std::string(strerror(errno)));
         return;
     }
-
     childPid_ = fork();
     if (childPid_ == -1) {
         AI_LOG("Failed to fork: " + std::string(strerror(errno)));
@@ -66,9 +64,7 @@ void StockfishSearch::startStockfish() {
         close(fromChild[1]);
         return;
     }
-
     if (childPid_ == 0) {
-        // Child process
         close(toChild[1]);
         close(fromChild[0]);
         dup2(toChild[0], STDIN_FILENO);
@@ -79,7 +75,6 @@ void StockfishSearch::startStockfish() {
         AI_LOG("Failed to exec stockfish: " + std::string(strerror(errno)));
         exit(1);
     } else {
-        // Parent process
         close(toChild[0]);
         close(fromChild[1]);
         writePipe_ = fdopen(toChild[1], "w");
@@ -94,10 +89,12 @@ void StockfishSearch::startStockfish() {
             }
             return;
         }
-        setvbuf(writePipe_, nullptr, _IONBF, 0); // Disable buffering
-        setvbuf(readPipe_, nullptr, _IONBF, 0); // Disable buffering
+        setvbuf(writePipe_, nullptr, _IONBF, 0);
+        setvbuf(readPipe_, nullptr, _IONBF, 0);
         auto start = std::chrono::steady_clock::now();
         fprintf(writePipe_, "uci\n");
+        fprintf(writePipe_, "setoption name Skill Level value %d\n", skillLevel_);
+        fprintf(writePipe_, "isready\n");
         fflush(writePipe_);
         char buf[256];
         int readAttempts = 0;
@@ -105,11 +102,11 @@ void StockfishSearch::startStockfish() {
             fd_set readfds;
             FD_ZERO(&readfds);
             FD_SET(fileno(readPipe_), &readfds);
-            struct timeval timeout = {0, 100000}; // 100ms timeout
+            struct timeval timeout = {0, 100000};
             int ready = select(fileno(readPipe_) + 1, &readfds, nullptr, nullptr, &timeout);
             if (ready > 0 && fgets(buf, sizeof(buf), readPipe_)) {
                 AI_LOG("Stockfish init output: " + std::string(buf));
-                if (strstr(buf, "uciok")) break;
+                if (strstr(buf, "readyok")) break;
             } else if (ready == 0) {
                 AI_LOG("Stockfish init read timeout after " + std::to_string(readAttempts) + " attempts");
             } else {
@@ -118,7 +115,7 @@ void StockfishSearch::startStockfish() {
             }
         }
         if (readAttempts >= 200) {
-            AI_LOG("Stockfish initialization timed out after " + std::to_string(readAttempts) + " attempts");
+            AI_LOG("Stockfish initialization timed out after " + std::to_string(readAttempts) + " attempts, resetting pipes");
             fclose(writePipe_);
             fclose(readPipe_);
             writePipe_ = nullptr;
@@ -128,39 +125,7 @@ void StockfishSearch::startStockfish() {
             childPid_ = -1;
             return;
         }
-        fprintf(writePipe_, "setoption name Skill Level value %d\n", skillLevel_);
-        fprintf(writePipe_, "isready\n");
-        fflush(writePipe_);
-        readAttempts = 0;
-        while (readAttempts++ < 200) {
-            fd_set readfds;
-            FD_ZERO(&readfds);
-            FD_SET(fileno(readPipe_), &readfds);
-            struct timeval timeout = {0, 100000}; // 100ms timeout
-            int ready = select(fileno(readPipe_) + 1, &readfds, nullptr, nullptr, &timeout);
-            if (ready > 0 && fgets(buf, sizeof(buf), readPipe_)) {
-                AI_LOG("Stockfish isready output: " + std::string(buf));
-                if (strstr(buf, "readyok")) break;
-            } else if (ready == 0) {
-                AI_LOG("Stockfish isready read timeout after " + std::to_string(readAttempts) + " attempts");
-            } else {
-                AI_LOG("Stockfish isready read error: " + std::string(strerror(errno)));
-                break;
-            }
-        }
-        if (readAttempts >= 200) {
-            AI_LOG("Stockfish isready timed out after " + std::to_string(readAttempts) + " attempts");
-            fclose(writePipe_);
-            fclose(readPipe_);
-            writePipe_ = nullptr;
-            readPipe_ = nullptr;
-            kill(childPid_, SIGTERM);
-            waitpid(childPid_, nullptr, 0);
-            childPid_ = -1;
-            return;
-        }
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
-        AI_LOG("Stockfish initialized with skill level " + std::to_string(skillLevel_) + " in " + std::to_string(duration) + " ms");
+        AI_LOG("Stockfish initialized with skill level " + std::to_string(skillLevel_) + " in " + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count()) + " ms");
     }
 }
 
@@ -178,15 +143,15 @@ std::string StockfishSearch::getBestMoveFromStockfish(const Board& board) {
     fprintf(writePipe_, "position fen %s\n", fen.c_str());
     fprintf(writePipe_, "go depth 10\n");
     fflush(writePipe_);
-    auto start = std::chrono::steady_clock::now();
     char buf[256];
     std::string bestMove;
     int readAttempts = 0;
-    auto maxDuration = std::chrono::milliseconds(5000); // 5s timeout
+    auto start = std::chrono::steady_clock::now();
+    auto maxDuration = std::chrono::milliseconds(5000);
     while (readAttempts++ < 200) {
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - start) > maxDuration) {
-            AI_LOG("Stockfish move retrieval exceeded 5s timeout, resetting pipes");
+            AI_LOG("Stockfish move retrieval exceeded timeout, resetting pipes");
             fclose(writePipe_);
             fclose(readPipe_);
             writePipe_ = nullptr;
@@ -197,26 +162,19 @@ std::string StockfishSearch::getBestMoveFromStockfish(const Board& board) {
                 childPid_ = -1;
             }
             startStockfish();
-            break;
+            return "";
         }
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(fileno(readPipe_), &readfds);
-        struct timeval timeout = {0, 100000}; // 100ms timeout
+        struct timeval timeout = {0, 100000};
         int ready = select(fileno(readPipe_) + 1, &readfds, nullptr, nullptr, &timeout);
         if (ready > 0 && fgets(buf, sizeof(buf), readPipe_)) {
             AI_LOG("Stockfish output: " + std::string(buf));
-            if (strstr(buf, "bestmove")) {
-                char* moveStr = strstr(buf, "bestmove ");
-                if (moveStr) {
-                    moveStr += 9;
-                    char* end = strchr(moveStr, ' ');
-                    if (end) *end = '\0';
-                    bestMove = moveStr;
-                    AI_LOG("Best move received: " + bestMove);
-                } else {
-                    AI_LOG("No valid move in bestmove line: " + std::string(buf));
-                }
+            if (strncmp(buf, "bestmove ", 9) == 0) {
+                bestMove = std::string(buf + 9);
+                bestMove = bestMove.substr(0, bestMove.find(' '));
+                AI_LOG("Best move received: " + bestMove);
                 break;
             }
         } else if (ready == 0) {
@@ -238,49 +196,63 @@ std::string StockfishSearch::getBestMoveFromStockfish(const Board& board) {
             childPid_ = -1;
         }
         startStockfish();
+        return "";
     }
     if (bestMove.empty()) {
         AI_LOG("No valid move received from Stockfish");
     }
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
-    AI_LOG("Stockfish move retrieval took " + std::to_string(duration) + " ms");
+    AI_LOG("Stockfish move retrieval took " + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count()) + " ms");
     return bestMove;
 }
 
-SearchResult StockfishSearch::search(const Board& board, int depth) {
+SearchResult StockfishSearch::search(const Board& board, int depth, std::string* uciMove) {
     AI_LOG("Starting StockfishSearch::search with depth " + std::to_string(depth) + " for FEN: " + board.getFEN());
-    std::string uci = getBestMoveFromStockfish(board);
-    if (uci.empty()) {
-        AI_LOG("No move from Stockfish, returning default result");
-        return {0.0f, {0, 0}, {}};
-    }
-    Move bestMove = Convert::fromUCI(uci);
-    AI_LOG("UCI move: " + uci + ", converted to from=" + std::to_string(bestMove.from) + ", to=" + std::to_string(bestMove.to));
-    if (bestMove.from >= 64 || bestMove.to >= 64 || bestMove.from < 0 || bestMove.to < 0) {
-        AI_LOG("Invalid move from Stockfish UCI: " + uci + ", returning default result");
-        return {0.0f, {0, 0}, {}};
-    }
-    // Verify move is legal
-    auto legalMoves = board.getLegalMoves(board.isWhiteToMove() ? Color::White : Color::Black);
-    bool isLegal = false;
-    for (const auto& move : legalMoves) {
-        if (move.first == bestMove.from && move.second == bestMove.to) {
-            isLegal = true;
-            break;
+    SearchResult result;
+    result.score = 0.0f;
+    result.bestMove = {0, 0};
+    result.topMoves.clear();
+
+    std::string uciMoveStr = getBestMoveFromStockfish(board);
+    if (!uciMoveStr.empty()) {
+        if (uciMove) *uciMove = uciMoveStr;
+        result.bestMove = fromUCI(uciMoveStr);
+        AI_LOG("UCI move: " + uciMoveStr + ", converted to from=" + std::to_string(result.bestMove.first) + ", to=" + std::to_string(result.bestMove.second));
+        if (result.bestMove.first >= 64 || result.bestMove.second >= 64 || result.bestMove.first < 0 || result.bestMove.second < 0) {
+            AI_LOG("Invalid move from Stockfish UCI: " + uciMoveStr);
+            result.score = 0.0f;
+            result.bestMove = {0, 0};
+            return result;
         }
+        auto legalMoves = board.getLegalMoves(Color::Black);
+        bool isLegal = false;
+        for (const auto& move : legalMoves) {
+            if (move.first == result.bestMove.first && move.second == result.bestMove.second) {
+                isLegal = true;
+                break;
+            }
+        }
+        if (!isLegal) {
+            AI_LOG("Stockfish move " + uciMoveStr + " is not legal for black");
+            result.score = 0.0f;
+            result.bestMove = {0, 0};
+            return result;
+        }
+        Board tempBoard(board);
+        AI_LOG("Board before move: " + tempBoard.getFEN());
+        if (!tempBoard.movePiece(result.bestMove.first, result.bestMove.second)) {
+            AI_LOG("Stockfish move " + uciMoveStr + " failed to apply");
+            result.score = 0.0f;
+            result.bestMove = {0, 0};
+            return result;
+        }
+        AI_LOG("Board after move: " + tempBoard.getFEN());
+        result.score = 0.0f;
+        result.topMoves = {result.bestMove};
+        AI_LOG("StockfishSearch completed, move: " + uciMoveStr + ", score: " + std::to_string(result.score));
+    } else {
+        AI_LOG("No move from Stockfish");
+        result.score = 0.0f;
+        result.bestMove = {0, 0};
     }
-    if (!isLegal) {
-        AI_LOG("Stockfish move " + uci + " is not legal, returning default result");
-        return {0.0f, {0, 0}, {}};
-    }
-    Board tempBoard(board);
-    AI_LOG("Board before move: " + tempBoard.getFEN());
-    if (!tempBoard.movePiece(bestMove.from, bestMove.to)) {
-        AI_LOG("Stockfish move " + uci + " failed to apply, returning default result");
-        return {0.0f, {0, 0}, {}};
-    }
-    AI_LOG("Board after move: " + tempBoard.getFEN());
-    float score = 0.0f; // Simplified, as Stockfish doesn't return a score directly
-    AI_LOG("StockfishSearch completed, move: " + uci + ", score: " + std::to_string(score));
-    return {score, bestMove, {bestMove}};
+    return result;
 }

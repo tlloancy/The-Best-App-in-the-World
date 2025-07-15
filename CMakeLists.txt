@@ -109,6 +109,7 @@ set(SOURCES
     src/engine/MCTS.cpp
     src/engine/Search.cpp
     src/engine/Stockfish.cpp
+    src/gui/Menu.cpp
     src/gui/Renderer.cpp
     src/gui/Spiral.cpp
     src/utils/Bitboard.cpp

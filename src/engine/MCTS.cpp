@@ -1,6 +1,8 @@
 #include "../../include/engine/MCTS.hpp"
 #include "../../include/core/Evaluator.hpp"
 #include "../../include/utils/Convert.hpp"
+#include <random>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
@@ -10,12 +12,8 @@
 #include <sys/select.h>
 #include <signal.h>
 #include <chrono>
-#include <random>
-#include <cmath>
 
-// Define AI_DEBUG to enable AI-specific debug output (comment out to disable)
 #define AI_DEBUG
-
 #ifdef AI_DEBUG
 #define AI_LOG(msg) std::cerr << "[AI_DEBUG] " << msg << std::endl
 #else
@@ -24,13 +22,13 @@
 
 struct MCTSNode {
     Board board;
-    Move move;
+    std::pair<int, int> move;
     int visits = 0;
     float totalScore = 0.0f;
     std::vector<MCTSNode*> children;
     MCTSNode* parent = nullptr;
 
-    MCTSNode(const Board& b, const Move& m = {0, 0}) : board(b), move(m) {}
+    MCTSNode(const Board& b, const std::pair<int, int>& m = {0, 0}) : board(b), move(m) {}
     ~MCTSNode() { for (auto child : children) delete child; }
 
     float uctScore(int parentVisits) const {
@@ -52,11 +50,18 @@ SearchResult MCTS::evaluate(const Board& board, int iterations) {
 
     for (int i = 0; i < iterations; ++i) {
         MCTSNode* node = root;
+        Board currentBoard = board;
+        std::vector<MCTSNode*> path = {node};
 
         // Selection
         while (!node->children.empty()) {
             node = *std::max_element(node->children.begin(), node->children.end(),
                 [node](const MCTSNode* a, const MCTSNode* b) { return a->uctScore(node->visits) < b->uctScore(node->visits); });
+            if (!currentBoard.movePiece(node->move.first, node->move.second)) {
+                AI_LOG("Failed to apply move from " + std::to_string(node->move.first) + " to " + std::to_string(node->move.second));
+                break;
+            }
+            path.push_back(node);
         }
 
         // Expansion
@@ -69,44 +74,51 @@ SearchResult MCTS::evaluate(const Board& board, int iterations) {
                     AI_LOG("Failed to apply move from " + std::to_string(move.first) + " to " + std::to_string(move.second));
                     continue;
                 }
-                MCTSNode* child = new MCTSNode(temp, {move.first, move.second});
+                MCTSNode* child = new MCTSNode(temp, move);
                 child->parent = node;
                 node->children.push_back(child);
             }
             if (!node->children.empty()) {
                 std::uniform_int_distribution<size_t> dist(0, node->children.size() - 1);
                 node = node->children[dist(gen)];
+                if (!currentBoard.movePiece(node->move.first, node->move.second)) {
+                    AI_LOG("Failed to apply expansion move from " + std::to_string(node->move.first) + " to " + std::to_string(node->move.second));
+                    continue;
+                }
+                path.push_back(node);
             }
         }
 
         // Simulation
-        Board simBoard(node->board);
         float simScore = 0.0f;
         int simDepth = 0;
-        while (simDepth < 10 && !simBoard.isCheckmate() && !simBoard.isStalemate() && !simBoard.isDraw()) {
-            auto moves = simBoard.getLegalMoves(simBoard.isWhiteToMove() ? Color::White : Color::Black);
+        while (simDepth < 10 && !currentBoard.isCheckmate() && !currentBoard.isStalemate() && !currentBoard.isDraw()) {
+            auto moves = currentBoard.getLegalMoves(currentBoard.isWhiteToMove() ? Color::White : Color::Black);
             if (moves.empty()) {
                 AI_LOG("No legal moves in simulation at depth " + std::to_string(simDepth));
                 break;
             }
             std::uniform_int_distribution<size_t> dist(0, moves.size() - 1);
             auto move = moves[dist(gen)];
-            if (!simBoard.movePiece(move.first, move.second)) {
+            if (!currentBoard.movePiece(move.first, move.second)) {
                 AI_LOG("Failed to apply simulation move from " + std::to_string(move.first) + " to " + std::to_string(move.second));
                 break;
             }
             simDepth++;
         }
         Evaluator evaluator;
-        simScore = evaluator.evaluate(simBoard);
+        simScore = evaluator.evaluate(currentBoard);
+        if (std::isnan(simScore) || std::isinf(simScore)) {
+            AI_LOG("Invalid simulation score: " + std::to_string(simScore));
+            simScore = 0.0f;
+        }
         AI_LOG("Simulation completed, score: " + std::to_string(simScore));
 
         // Backpropagation
-        while (node) {
-            node->visits++;
-            node->totalScore += simScore;
+        for (MCTSNode* n : path) {
+            n->visits++;
+            n->totalScore += simScore;
             simScore = -simScore;
-            node = node->parent;
         }
     }
 
@@ -114,8 +126,11 @@ SearchResult MCTS::evaluate(const Board& board, int iterations) {
         auto bestChild = *std::max_element(root->children.begin(), root->children.end(),
             [](const MCTSNode* a, const MCTSNode* b) { return a->totalScore / a->visits < b->totalScore / b->visits; });
         result.score = bestChild->totalScore / bestChild->visits;
+        if (std::isnan(result.score) || std::isinf(result.score)) {
+            AI_LOG("Invalid final score: " + std::to_string(result.score));
+            result.score = 0.0f;
+        }
         result.bestMove = bestChild->move;
-
         std::vector<std::pair<MCTSNode*, float>> scoredChildren;
         for (auto child : root->children) {
             scoredChildren.emplace_back(child, child->visits > 0 ? child->totalScore / child->visits : 0.0f);
@@ -126,17 +141,18 @@ SearchResult MCTS::evaluate(const Board& board, int iterations) {
             result.topMoves.push_back(scoredChildren[i].first->move);
         }
         AI_LOG("MCTS evaluation completed, best move: " +
-               std::string(1, 'a' + (result.bestMove.from % 8)) + std::to_string(8 - (result.bestMove.from / 8)) + "-" +
-               std::string(1, 'a' + (result.bestMove.to % 8)) + std::to_string(8 - (result.bestMove.to / 8)) + ", score: " + std::to_string(result.score));
+               std::string(1, 'a' + (result.bestMove.first % 8)) + std::to_string(8 - (result.bestMove.first / 8)) + "-" +
+               std::string(1, 'a' + (result.bestMove.second % 8)) + std::to_string(8 - (result.bestMove.second / 8)) + ", score: " + std::to_string(result.score));
     } else {
         AI_LOG("No valid moves found in MCTS evaluation");
     }
+
     delete root;
     return result;
 }
 
-MCTSSearch::MCTSSearch(int skillLevel) : skillLevel_(skillLevel) {
-    AI_LOG("Initializing MCTSSearch with skill level " + std::to_string(skillLevel));
+MCTSSearch::MCTSSearch(int elo, int thinkTimeMs) : elo_(elo), thinkTimeMs_(thinkTimeMs) {
+    AI_LOG("Initializing MCTSSearch with Elo " + std::to_string(elo_) + " and think time " + std::to_string(thinkTimeMs_) + "ms");
     startStockfish();
 }
 
@@ -173,7 +189,6 @@ void MCTSSearch::startStockfish() {
         AI_LOG("Failed to create pipes: " + std::string(strerror(errno)));
         return;
     }
-
     childPid_ = fork();
     if (childPid_ == -1) {
         AI_LOG("Failed to fork: " + std::string(strerror(errno)));
@@ -183,9 +198,7 @@ void MCTSSearch::startStockfish() {
         close(fromChild[1]);
         return;
     }
-
     if (childPid_ == 0) {
-        // Child process
         close(toChild[1]);
         close(fromChild[0]);
         dup2(toChild[0], STDIN_FILENO);
@@ -196,7 +209,6 @@ void MCTSSearch::startStockfish() {
         AI_LOG("Failed to exec stockfish: " + std::string(strerror(errno)));
         exit(1);
     } else {
-        // Parent process
         close(toChild[0]);
         close(fromChild[1]);
         writePipe_ = fdopen(toChild[1], "w");
@@ -211,10 +223,13 @@ void MCTSSearch::startStockfish() {
             }
             return;
         }
-        setvbuf(writePipe_, nullptr, _IONBF, 0); // Disable buffering
-        setvbuf(readPipe_, nullptr, _IONBF, 0); // Disable buffering
+        setvbuf(writePipe_, nullptr, _IONBF, 0);
+        setvbuf(readPipe_, nullptr, _IONBF, 0);
         auto start = std::chrono::steady_clock::now();
         fprintf(writePipe_, "uci\n");
+        fprintf(writePipe_, "setoption name UCI_LimitStrength value %s\n", elo_ < 3190 ? "true" : "false");
+        fprintf(writePipe_, "setoption name UCI_Elo value %d\n", std::min(elo_, 3190));
+        fprintf(writePipe_, "isready\n");
         fflush(writePipe_);
         char buf[256];
         int readAttempts = 0;
@@ -222,7 +237,7 @@ void MCTSSearch::startStockfish() {
             fd_set readfds;
             FD_ZERO(&readfds);
             FD_SET(fileno(readPipe_), &readfds);
-            struct timeval timeout = {0, 100000}; // 100ms timeout
+            struct timeval timeout = {0, 100000};
             int ready = select(fileno(readPipe_) + 1, &readfds, nullptr, nullptr, &timeout);
             if (ready > 0 && fgets(buf, sizeof(buf), readPipe_)) {
                 AI_LOG("Stockfish init output: " + std::string(buf));
@@ -235,7 +250,7 @@ void MCTSSearch::startStockfish() {
             }
         }
         if (readAttempts >= 200) {
-            AI_LOG("Stockfish initialization timed out after " + std::to_string(readAttempts) + " attempts");
+            AI_LOG("Stockfish initialization timed out after " + std::to_string(readAttempts) + " attempts, resetting pipes");
             fclose(writePipe_);
             fclose(readPipe_);
             writePipe_ = nullptr;
@@ -245,7 +260,8 @@ void MCTSSearch::startStockfish() {
             childPid_ = -1;
             return;
         }
-        fprintf(writePipe_, "setoption name Skill Level value %d\n", skillLevel_);
+        fprintf(writePipe_, "setoption name UCI_LimitStrength value %s\n", elo_ < 3190 ? "true" : "false");
+        fprintf(writePipe_, "setoption name UCI_Elo value %d\n", std::min(elo_, 3190));
         fprintf(writePipe_, "isready\n");
         fflush(writePipe_);
         readAttempts = 0;
@@ -253,7 +269,7 @@ void MCTSSearch::startStockfish() {
             fd_set readfds;
             FD_ZERO(&readfds);
             FD_SET(fileno(readPipe_), &readfds);
-            struct timeval timeout = {0, 100000}; // 100ms timeout
+            struct timeval timeout = {0, 100000};
             int ready = select(fileno(readPipe_) + 1, &readfds, nullptr, nullptr, &timeout);
             if (ready > 0 && fgets(buf, sizeof(buf), readPipe_)) {
                 AI_LOG("Stockfish isready output: " + std::string(buf));
@@ -266,7 +282,7 @@ void MCTSSearch::startStockfish() {
             }
         }
         if (readAttempts >= 200) {
-            AI_LOG("Stockfish isready timed out after " + std::to_string(readAttempts) + " attempts");
+            AI_LOG("Stockfish ready check timed out after " + std::to_string(readAttempts) + " attempts, resetting pipes");
             fclose(writePipe_);
             fclose(readPipe_);
             writePipe_ = nullptr;
@@ -276,8 +292,48 @@ void MCTSSearch::startStockfish() {
             childPid_ = -1;
             return;
         }
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
-        AI_LOG("Stockfish initialized with skill level " + std::to_string(skillLevel_) + " in " + std::to_string(duration) + " ms");
+        AI_LOG("Stockfish initialized with Elo " + std::to_string(elo_) + " in " + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count()) + " ms");
+    }
+}
+
+void MCTSSearch::setSkillLevel(int elo, int thinkTimeMs) {
+    elo_ = std::max(0, std::min(10000, elo));
+    thinkTimeMs_ = thinkTimeMs;
+    if (writePipe_) {
+        fprintf(writePipe_, "setoption name UCI_LimitStrength value %s\n", elo_ < 3190 ? "true" : "false");
+        fprintf(writePipe_, "setoption name UCI_Elo value %d\n", std::min(elo_, 3190));
+        fprintf(writePipe_, "isready\n");
+        fflush(writePipe_);
+        char buf[256];
+        int readAttempts = 0;
+        while (readAttempts++ < 200) {
+            fd_set readfds;
+            FD_ZERO(&readfds);
+            FD_SET(fileno(readPipe_), &readfds);
+            struct timeval timeout = {0, 100000};
+            int ready = select(fileno(readPipe_) + 1, &readfds, nullptr, nullptr, &timeout);
+            if (ready > 0 && fgets(buf, sizeof(buf), readPipe_)) {
+                AI_LOG("Stockfish isready output: " + std::string(buf));
+                if (strstr(buf, "readyok")) break;
+            } else if (ready == 0) {
+                AI_LOG("Stockfish isready read timeout after " + std::to_string(readAttempts) + " attempts");
+            } else {
+                AI_LOG("Stockfish isready read error: " + std::string(strerror(errno)));
+                break;
+            }
+        }
+        if (readAttempts >= 200) {
+            AI_LOG("Stockfish ready check timed out after " + std::to_string(readAttempts) + " attempts, resetting pipes");
+            fclose(writePipe_);
+            fclose(readPipe_);
+            writePipe_ = nullptr;
+            readPipe_ = nullptr;
+            kill(childPid_, SIGTERM);
+            waitpid(childPid_, nullptr, 0);
+            childPid_ = -1;
+            startStockfish();
+        }
+        AI_LOG("Stockfish skill level updated to Elo " + std::to_string(elo_) + ", think time " + std::to_string(thinkTimeMs_) + "ms");
     }
 }
 
@@ -293,17 +349,21 @@ std::string MCTSSearch::getBestMoveFromStockfish(const Board& board) {
     std::string fen = board.getFEN();
     AI_LOG("Sending FEN to Stockfish: " + fen);
     fprintf(writePipe_, "position fen %s\n", fen.c_str());
-    fprintf(writePipe_, "go depth 10\n");
+    if (thinkTimeMs_ > 0) {
+        fprintf(writePipe_, "go movetime %d\n", thinkTimeMs_);
+    } else {
+        fprintf(writePipe_, "go depth 10\n");
+    }
     fflush(writePipe_);
-    auto start = std::chrono::steady_clock::now();
     char buf[256];
     std::string bestMove;
     int readAttempts = 0;
-    auto maxDuration = std::chrono::milliseconds(5000);
+    auto start = std::chrono::steady_clock::now();
+    auto maxDuration = std::chrono::milliseconds(thinkTimeMs_ > 0 ? thinkTimeMs_ + 1000 : 5000);
     while (readAttempts++ < 200) {
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - start) > maxDuration) {
-            AI_LOG("Stockfish move retrieval exceeded 5s timeout, resetting pipes");
+            AI_LOG("Stockfish move retrieval exceeded timeout, resetting pipes");
             fclose(writePipe_);
             fclose(readPipe_);
             writePipe_ = nullptr;
@@ -319,21 +379,14 @@ std::string MCTSSearch::getBestMoveFromStockfish(const Board& board) {
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(fileno(readPipe_), &readfds);
-        struct timeval timeout = {0, 100000}; // 100ms timeout
+        struct timeval timeout = {0, 100000};
         int ready = select(fileno(readPipe_) + 1, &readfds, nullptr, nullptr, &timeout);
         if (ready > 0 && fgets(buf, sizeof(buf), readPipe_)) {
             AI_LOG("Stockfish output: " + std::string(buf));
-            if (strstr(buf, "bestmove")) {
-                char* moveStr = strstr(buf, "bestmove ");
-                if (moveStr) {
-                    moveStr += 9;
-                    char* end = strchr(moveStr, ' ');
-                    if (end) *end = '\0';
-                    bestMove = moveStr;
-                    AI_LOG("Best move received: " + bestMove);
-                } else {
-                    AI_LOG("No valid move in bestmove line: " + std::string(buf));
-                }
+            if (strncmp(buf, "bestmove ", 9) == 0) {
+                bestMove = std::string(buf + 9);
+                bestMove = bestMove.substr(0, bestMove.find(' '));
+                AI_LOG("Best move received: " + bestMove);
                 break;
             }
         } else if (ready == 0) {
@@ -360,119 +413,72 @@ std::string MCTSSearch::getBestMoveFromStockfish(const Board& board) {
     if (bestMove.empty()) {
         AI_LOG("No valid move received from Stockfish");
     }
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
-    AI_LOG("Stockfish move retrieval took " + std::to_string(duration) + " ms");
+    AI_LOG("Stockfish move retrieval took " + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count()) + " ms");
     return bestMove;
 }
 
-SearchResult MCTSSearch::search(const Board& board, int depth, std::string* uciMove, std::vector<SearchResult>* topResults) {
+SearchResult MCTSSearch::search(const Board& board, int depth, std::string* uciMove) {
     AI_LOG("Starting MCTSSearch::search with depth " + std::to_string(depth) + " for FEN: " + board.getFEN());
-    std::string uci = getBestMoveFromStockfish(board);
-    if (uci.empty()) {
-        AI_LOG("No move from Stockfish, falling back to MCTS evaluation");
-        MCTS mcts;
-        SearchResult result = mcts.evaluate(board, 100);
-        if (topResults) {
-            topResults->clear();
-            for (const auto& move : result.topMoves) {
-                std::string moveUci = std::string(1, 'a' + (move.from % 8)) + 
-                                      std::to_string(8 - (move.from / 8)) +
-                                      std::string(1, 'a' + (move.to % 8)) +
-                                      std::to_string(8 - (move.to / 8));
-                SearchResult sr;
-                sr.score = result.score;
-                sr.bestMove = move;
-                sr.topMoves = {};
-                topResults->push_back(sr);
+    SearchResult result;
+    result.score = 0.0f;
+    result.bestMove = {0, 0};
+    result.topMoves.clear();
+
+    if (elo_ >= 1500 && writePipe_ && readPipe_) {
+        std::string uci = getBestMoveFromStockfish(board);
+        if (!uci.empty()) {
+            if (uciMove) *uciMove = uci;
+            std::pair<int, int> bestMove = fromUCI(uci);
+            AI_LOG("UCI move: " + uci + ", converted to from=" + std::to_string(bestMove.first) + ", to=" + std::to_string(bestMove.second));
+            if (bestMove.first >= 64 || bestMove.second >= 64 || bestMove.first < 0 || bestMove.second < 0) {
+                AI_LOG("Invalid move from Stockfish UCI: " + uci + ", falling back to MCTS evaluation");
+                MCTS mcts;
+                return mcts.evaluate(board, 100);
             }
-        }
-        return result;
-    }
-    if (uciMove) *uciMove = uci;
-    Move bestMove = Convert::fromUCI(uci);
-    AI_LOG("UCI move: " + uci + ", converted to from=" + std::to_string(bestMove.from) + ", to=" + std::to_string(bestMove.to));
-    if (bestMove.from >= 64 || bestMove.to >= 64 || bestMove.from < 0 || bestMove.to < 0) {
-        AI_LOG("Invalid move from Stockfish UCI: " + uci + ", falling back to MCTS evaluation");
-        MCTS mcts;
-        SearchResult result = mcts.evaluate(board, 100);
-        if (topResults) {
-            topResults->clear();
-            for (const auto& move : result.topMoves) {
-                std::string moveUci = std::string(1, 'a' + (move.from % 8)) + 
-                                      std::to_string(8 - (move.from / 8)) +
-                                      std::string(1, 'a' + (move.to % 8)) +
-                                      std::to_string(8 - (move.to / 8));
-                SearchResult sr;
-                sr.score = result.score;
-                sr.bestMove = move;
-                sr.topMoves = {};
-                topResults->push_back(sr);
+            auto legalMoves = board.getLegalMoves(Color::Black);
+            bool isLegal = false;
+            for (const auto& move : legalMoves) {
+                if (move.first == bestMove.first && move.second == bestMove.second) {
+                    isLegal = true;
+                    break;
+                }
             }
-        }
-        return result;
-    }
-    auto legalMoves = board.getLegalMoves(Color::Black);
-    bool isLegal = false;
-    for (const auto& move : legalMoves) {
-        if (move.first == bestMove.from && move.second == bestMove.to) {
-            isLegal = true;
-            break;
-        }
-    }
-    if (!isLegal) {
-        AI_LOG("Stockfish move " + uci + " is not legal for black, falling back to MCTS evaluation");
-        MCTS mcts;
-        SearchResult result = mcts.evaluate(board, 100);
-        if (topResults) {
-            topResults->clear();
-            for (const auto& move : result.topMoves) {
-                std::string moveUci = std::string(1, 'a' + (move.from % 8)) + 
-                                      std::to_string(8 - (move.from / 8)) +
-                                      std::string(1, 'a' + (move.to % 8)) +
-                                      std::to_string(8 - (move.to / 8));
-                SearchResult sr;
-                sr.score = result.score;
-                sr.bestMove = move;
-                sr.topMoves = {};
-                topResults->push_back(sr);
+            if (!isLegal) {
+                AI_LOG("Stockfish move " + uci + " is not legal for black, falling back to MCTS evaluation");
+                MCTS mcts;
+                return mcts.evaluate(board, 100);
             }
-        }
-        return result;
-    }
-    Board tempBoard(board);
-    AI_LOG("Board before move: " + tempBoard.getFEN());
-    if (!tempBoard.movePiece(bestMove.from, bestMove.to)) {
-        AI_LOG("Stockfish move " + uci + " failed to apply, falling back to MCTS evaluation");
-        MCTS mcts;
-        SearchResult result = mcts.evaluate(board, 100);
-        if (topResults) {
-            topResults->clear();
-            for (const auto& move : result.topMoves) {
-                std::string moveUci = std::string(1, 'a' + (move.from % 8)) + 
-                                      std::to_string(8 - (move.from / 8)) +
-                                      std::string(1, 'a' + (move.to % 8)) +
-                                      std::to_string(8 - (move.to / 8));
-                SearchResult sr;
-                sr.score = result.score;
-                sr.bestMove = move;
-                sr.topMoves = {};
-                topResults->push_back(sr);
+            Board tempBoard(board);
+            AI_LOG("Board before move: " + tempBoard.getFEN());
+            if (!tempBoard.movePiece(bestMove.first, bestMove.second)) {
+                AI_LOG("Stockfish move " + uci + " failed to apply, falling back to MCTS evaluation");
+                MCTS mcts;
+                return mcts.evaluate(board, 100);
             }
+            AI_LOG("Board after move: " + tempBoard.getFEN());
+            Evaluator evaluator;
+            float score = evaluator.evaluate(tempBoard);
+            if (std::isnan(score) || std::isinf(score)) {
+                AI_LOG("Invalid Stockfish evaluation score: " + std::to_string(score));
+                score = 0.0f;
+            }
+            result.score = score;
+            result.bestMove = bestMove;
+            result.topMoves = {bestMove};
+            AI_LOG("MCTSSearch completed, move: " + uci + ", score: " + std::to_string(score));
+        } else {
+            AI_LOG("No move from Stockfish, falling back to MCTS evaluation");
+            MCTS mcts;
+            return mcts.evaluate(board, 100);
         }
-        return result;
-    }
-    AI_LOG("Board after move: " + tempBoard.getFEN());
-    Evaluator evaluator;
-    float score = evaluator.evaluate(tempBoard);
-    AI_LOG("MCTSSearch completed, move: " + uci + ", score: " + std::to_string(score));
-    SearchResult result = {score, bestMove, {bestMove}};
-    if (topResults) {
-        topResults->clear();
-        SearchResult sr;
-        sr.score = score;
-        sr.bestMove = bestMove;
-        sr.topMoves = {};
-        topResults->push_back(sr);
+    } else {
+        MCTS mcts;
+        result = mcts.evaluate(board, 100);
+        if (uciMove && result.bestMove.first != 0 && result.bestMove.second != 0) {
+            *uciMove = std::string(1, 'a' + (result.bestMove.first % 8)) + std::to_string(8 - (result.bestMove.first / 8)) +
+                       std::string(1, 'a' + (result.bestMove.second % 8)) + std::to_string(8 - (result.bestMove.second / 8));
+            AI_LOG("MCTS move: " + *uciMove + ", score: " + std::to_string(result.score));
+        }
     }
     return result;
 }
