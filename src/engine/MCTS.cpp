@@ -205,7 +205,7 @@ void MCTSSearch::startStockfish() {
         dup2(fromChild[1], STDOUT_FILENO);
         close(toChild[0]);
         close(fromChild[1]);
-        execl("/mnt/c/Users/lloan/Documents/cosmic_chess/build/stockfish", "stockfish", (char *)nullptr);
+        execl(STOCKFISH_PATH, "stockfish", (char *)nullptr);
         AI_LOG("Failed to exec stockfish: " + std::string(strerror(errno)));
         exit(1);
     } else {

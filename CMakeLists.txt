@@ -126,6 +126,9 @@ add_custom_command(TARGET CosmicChess POST_BUILD
     COMMAND chmod +x ${CMAKE_BINARY_DIR}/stockfish
 )
 
+# Define the path to the Stockfish binary as a preprocessor macro
+target_compile_definitions(CosmicChess PRIVATE STOCKFISH_PATH="${CMAKE_BINARY_DIR}/stockfish")
+
 # Link libraries
 target_link_libraries(CosmicChess PRIVATE SDL3::SDL3)
 if(SDL3_image_FOUND AND TARGET SDL3_image::SDL3_image)

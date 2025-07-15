@@ -37,6 +37,8 @@ constexpr int NAV_BUTTON_W = 50;
 constexpr int NAV_BUTTON_H = 30;
 constexpr int NAV_BUTTON_SPACING = 10;
 constexpr int WINDOW_WIDTH = 1280;
+constexpr int VARIANTS_X = 850;
+constexpr int VARIANTS_Y = 100;
 
 static SDL_HitTestResult SDLCALL hitTest(SDL_Window* window, const SDL_Point* pt, void* data) {
     Renderer* renderer = static_cast<Renderer*>(data);
@@ -184,6 +186,7 @@ Renderer::Renderer(int width, int height, bool debug, bool enableMenu) : debugEn
                 initThread.join();
                 if (!mctsSearch_) {
                     AI_LOG("MCTSSearch initialization timed out or failed, using non-Stockfish search");
+                    useStockfish_ = false;
                 }
                 AI_LOG("AI initialization completed in " + std::to_string(elapsed.count()) + " seconds");
                 renderLoadingScreen(1.0f);
@@ -192,7 +195,7 @@ Renderer::Renderer(int width, int height, bool debug, bool enableMenu) : debugEn
         }
     }
     if (enableMenu_) {
-        menu_ = new Menu(renderer_, font_, boldFont_);
+        menu_ = new Menu(renderer_, font_, boldFont_, smallFont_);
         gameState_ = GameState::Menu;
     } else {
         gameState_ = GameState::Board;
@@ -244,9 +247,7 @@ void Renderer::updateSearchResult(const Board& board, bool isWhiteTurn) {
                 if (useStockfish_) {
                     AI_LOG("Launching StockfishSearch for depth 10");
                     StockfishSearch search(10);
-                    result = search.search(board, 10);
-                    uciMove = std::string(1, 'a' + (result.bestMove.first % 8)) + std::to_string(8 - (result.bestMove.first / 8)) +
-                              std::string(1, 'a' + (result.bestMove.second % 8)) + std::to_string(8 - (result.bestMove.second / 8));
+                    result = search.search(board, 10, &uciMove);
                 } else if (mctsSearch_) {
                     AI_LOG("Launching MCTSSearch for depth 3");
                     result = mctsSearch_->search(board, 3, &uciMove);
@@ -254,6 +255,7 @@ void Renderer::updateSearchResult(const Board& board, bool isWhiteTurn) {
                     AI_LOG("MCTSSearch is null, cannot perform search");
                     result.score = 0.0f;
                     result.bestMove = {0, 0};
+                    result.topMoves.clear();
                     aiThreadRunning_ = false;
                     return;
                 }
@@ -262,15 +264,19 @@ void Renderer::updateSearchResult(const Board& board, bool isWhiteTurn) {
                     result.score = 0.0f;
                 }
                 std::lock_guard<std::mutex> lock(searchMutex_);
+                // Invert score to match player's perspective (positive for white, negative for black)
+                float adjustedScore = -result.score; // Invert to correct for your observation
+                result.score = adjustedScore;
                 lastSearchResult_ = result;
                 searchResultValid_ = true;
                 aiThreadRunning_ = false;
-                AI_LOG("AI search completed, score: " + std::to_string(result.score) + ", best move: " + uciMove);
+                AI_LOG("AI search completed, adjusted score: " + std::to_string(adjustedScore) + ", best move: " + uciMove + ", top moves: " + std::to_string(result.topMoves.size()));
             } catch (const std::exception& e) {
                 AI_LOG("Exception in AI search thread: " + std::string(e.what()));
                 std::lock_guard<std::mutex> lock(searchMutex_);
                 lastSearchResult_.score = 0.0f;
                 lastSearchResult_.bestMove = {0, 0};
+                lastSearchResult_.topMoves.clear();
                 searchResultValid_ = false;
                 aiThreadRunning_ = false;
             }
@@ -505,8 +511,8 @@ void Renderer::renderGameEnd(const std::string& message, const SDL_Color& color,
 }
 
 void Renderer::renderEvaluation(const SearchResult& result) {
-    if (!font_ || !boldFont_) {
-        logDebug("Font is null in renderEvaluation");
+    if (!font_ || !boldFont_ || !smallFont_) {
+        logDebug("Font is null in renderEvaluation, skipping render");
         return;
     }
     if (std::isnan(result.score) || std::isinf(result.score)) {
@@ -514,22 +520,30 @@ void Renderer::renderEvaluation(const SearchResult& result) {
         return;
     }
     static float displayedScore = 0.0f;
-    displayedScore += (result.score - displayedScore) * 0.1f;
+    static float lastLoggedScore = std::numeric_limits<float>::quiet_NaN(); // Track last logged score
+    displayedScore += (result.score - displayedScore) * 0.05f;
     if (std::isnan(displayedScore) || std::isinf(displayedScore)) {
         AI_LOG("Invalid displayed score: " + std::to_string(displayedScore));
         displayedScore = 0.0f;
     }
-    std::string evalStr = "0.0";
+    // Log only if score changes by more than 0.01
+    if (std::abs(displayedScore - lastLoggedScore) > 0.01) {
+        AI_LOG("Rendering evaluation: raw score=" + std::to_string(result.score) + ", displayed=" + std::to_string(displayedScore));
+        lastLoggedScore = displayedScore;
+    }
+    std::ostringstream evalStream;
     if (std::abs(displayedScore) >= 1000.0f) {
         int mateDistance = static_cast<int>(std::abs(displayedScore)) - 1000 + 1;
-        evalStr = (displayedScore >= 0 ? "M" : "-M") + std::to_string(mateDistance);
+        evalStream << (displayedScore >= 0 ? "M" : "-M") << mateDistance;
     } else if (std::abs(displayedScore) >= 30.0f) {
-        evalStr = (displayedScore >= 0 ? "M1" : "-M1");
+        evalStream << (displayedScore >= 0 ? "M1" : "-M1");
     } else {
-        evalStr = (displayedScore >= 0 ? "+" : "") + std::to_string(displayedScore).substr(0, 4);
+        evalStream << std::fixed << std::setprecision(2) << (displayedScore >= 0 ? "+" : "") << displayedScore;
     }
-    AI_LOG("Rendering evaluation: " + evalStr);
-    SDL_Color neonColor = {255, 255, 255, static_cast<Uint8>(180 + 75 * std::sin(SDL_GetTicks() / 1000.0f * 2))};
+    std::string evalStr = evalStream.str();
+    // Set text color based on score
+    SDL_Color neonColor = {displayedScore < 0 ? 0 : 100, displayedScore < 0 ? 0 : 255, displayedScore < 0 ? 0 : 200, static_cast<Uint8>(180 + 75 * std::sin(SDL_GetTicks() / 1000.0f * 2))};
+    if (displayedScore < 0) neonColor = {0, 0, 0, 255}; // Black for negative (black advantage)
     SDL_Surface* evalSurface = TTF_RenderText_Blended(boldFont_, evalStr.c_str(), evalStr.length(), neonColor);
     if (evalSurface) {
         SDL_Texture* evalTexture = SDL_CreateTextureFromSurface(renderer_, evalSurface);
@@ -546,24 +560,56 @@ void Renderer::renderEvaluation(const SearchResult& result) {
         logDebug("Failed to render evaluation text: " + std::string(SDL_GetError()));
     }
     float eval = displayedScore;
-    float barHeight;
-    if (std::abs(eval) >= 1000.0f) {
-        barHeight = 496.0f;
-    } else if (std::abs(eval) >= 30.0f) {
-        barHeight = 496.0f;
-    } else if (std::abs(eval) >= 10.0f) {
-        barHeight = 496.0f * (0.5f + 0.5f * (std::abs(eval) - 10.0f) / 20.0f);
-    } else if (std::abs(eval) >= 1.0f) {
-        barHeight = 496.0f * (0.1f + 0.4f * (std::abs(eval) - 1.0f) / 9.0f);
-    } else {
-        barHeight = 496.0f * (std::abs(eval) / 10.0f);
-    }
-    SDL_SetRenderDrawColor(renderer_, 75, 85, 100, 255); // #4B5564
+    const float MAX_EVAL_RANGE = 10.0f;
+    // Calculate split point for thermometer effect (black top, white bottom, correct progression)
+    float splitPoint = 248.0f - (eval / MAX_EVAL_RANGE) * 248.0f; // Increases with white advantage, decreases with black advantage
+    splitPoint = std::clamp(splitPoint, 0.0f, 496.0f); // Ensure within bounds
+    AI_LOG("Eval: " + std::to_string(eval) + ", Split point: " + std::to_string(splitPoint));
+    // Draw background
+    SDL_SetRenderDrawColor(renderer_, 75, 85, 100, 255); // #4B5564 neutral background
     SDL_FRect bgBar = {static_cast<float>(EVAL_BAR_X), static_cast<float>(BOARD_OFFSET_Y), 20.0f, 496.0f};
     SDL_RenderFillRect(renderer_, &bgBar);
-    SDL_SetRenderDrawColor(renderer_, isBoardFlipped_ ? (eval >= 0 ? 0 : 255) : (eval >= 0 ? 255 : 0), isBoardFlipped_ ? (eval >= 0 ? 0 : 255) : (eval >= 0 ? 255 : 0), isBoardFlipped_ ? (eval >= 0 ? 0 : 255) : (eval >= 0 ? 255 : 0), 255);
-    SDL_FRect evalBar = {static_cast<float>(EVAL_BAR_X), eval >= 0 ? static_cast<float>(BOARD_OFFSET_Y + 496.0f - barHeight) : static_cast<float>(BOARD_OFFSET_Y), 20.0f, barHeight};
-    SDL_RenderFillRect(renderer_, &evalBar);
+    // Draw black portion (top) if not flipped, or white if flipped
+    if (!isBoardFlipped_) {
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255); // Black
+        SDL_FRect blackBar = {static_cast<float>(EVAL_BAR_X), static_cast<float>(BOARD_OFFSET_Y), 20.0f, splitPoint};
+        SDL_RenderFillRect(renderer_, &blackBar);
+        // Draw white portion (bottom)
+        SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255); // White
+        SDL_FRect whiteBar = {static_cast<float>(EVAL_BAR_X), static_cast<float>(BOARD_OFFSET_Y + splitPoint), 20.0f, 496.0f - splitPoint};
+        SDL_RenderFillRect(renderer_, &whiteBar);
+    } else {
+        // Flipped: white top, black bottom
+        SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255); // White
+        SDL_FRect whiteBar = {static_cast<float>(EVAL_BAR_X), static_cast<float>(BOARD_OFFSET_Y), 20.0f, splitPoint};
+        SDL_RenderFillRect(renderer_, &whiteBar);
+        SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255); // Black
+        SDL_FRect blackBar = {static_cast<float>(EVAL_BAR_X), static_cast<float>(BOARD_OFFSET_Y + splitPoint), 20.0f, 496.0f - splitPoint};
+        SDL_RenderFillRect(renderer_, &blackBar);
+    }
+    // Render top move variations
+    int yOffset = VARIANTS_Y;
+    for (size_t i = 0; i < std::min<size_t>(result.topMoves.size(), 10); ++i) {
+        const auto& move = result.topMoves[i];
+        std::string moveStr = std::string(1, 'a' + (move.first % 8)) + std::to_string(8 - (move.first / 8)) +
+                              "-" + std::string(1, 'a' + (move.second % 8)) + std::to_string(8 - (move.second / 8));
+        SDL_Surface* moveSurface = TTF_RenderText_Blended(smallFont_, moveStr.c_str(), moveStr.length(), neonColor);
+        if (moveSurface) {
+            SDL_Texture* moveTexture = SDL_CreateTextureFromSurface(renderer_, moveSurface);
+            if (moveTexture) {
+                SDL_SetTextureAlphaMod(moveTexture, neonColor.a);
+                SDL_FRect moveRect = {static_cast<float>(VARIANTS_X), static_cast<float>(yOffset), static_cast<float>(moveSurface->w), static_cast<float>(moveSurface->h)};
+                SDL_RenderTexture(renderer_, moveTexture, NULL, &moveRect);
+                SDL_DestroyTexture(moveTexture);
+            } else {
+                logDebug("Failed to create texture for move variation: " + std::string(SDL_GetError()));
+            }
+            SDL_DestroySurface(moveSurface);
+        } else {
+            logDebug("Failed to render move variation text: " + std::string(SDL_GetError()));
+        }
+        yOffset += 20;
+    }
 }
 
 void Renderer::renderNavigationButtons() {
