@@ -21,21 +21,19 @@
 #endif
 
 struct MCTSNode {
+    char pad[8];
+    float totalScore = 0.0f;
+    int visits = 0;
     Board board;
     std::pair<int, int> move;
-    int visits = 0;
-    float totalScore = 0.0f;
     std::vector<MCTSNode*> children;
     MCTSNode* parent = nullptr;
 
     MCTSNode(const Board& b, const std::pair<int, int>& m = {0, 0}) : board(b), move(m) {}
     ~MCTSNode() { for (auto child : children) delete child; }
-
-    float uctScore(int parentVisits) const {
-        if (visits == 0) return std::numeric_limits<float>::max();
-        return (totalScore / visits) + 1.414f * std::sqrt(std::log(parentVisits) / visits);
-    }
 };
+
+extern "C" float _mcts_uct_score(const MCTSNode* node, int parentVisits);
 
 SearchResult MCTS::evaluate(const Board& board, int iterations) {
     AI_LOG("Starting MCTS evaluation with " + std::to_string(iterations) + " iterations for board FEN: " + board.getFEN());
@@ -56,7 +54,7 @@ SearchResult MCTS::evaluate(const Board& board, int iterations) {
         // Selection
         while (!node->children.empty()) {
             node = *std::max_element(node->children.begin(), node->children.end(),
-                [node](const MCTSNode* a, const MCTSNode* b) { return a->uctScore(node->visits) < b->uctScore(node->visits); });
+                [node](const MCTSNode* a, const MCTSNode* b) { return _mcts_uct_score(a, node->visits) < _mcts_uct_score(b, node->visits); });
             if (!currentBoard.movePiece(node->move.first, node->move.second)) {
                 AI_LOG("Failed to apply move from " + std::to_string(node->move.first) + " to " + std::to_string(node->move.second));
                 break;

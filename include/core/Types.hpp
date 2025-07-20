@@ -1,6 +1,6 @@
 #ifndef TYPES_HPP
 #define TYPES_HPP
 
-enum class Color { White, Black };
+enum class Color : int { White, Black };
 
 #endif

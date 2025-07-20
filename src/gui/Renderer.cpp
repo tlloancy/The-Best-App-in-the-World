@@ -264,8 +264,7 @@ void Renderer::updateSearchResult(const Board& board, bool isWhiteTurn) {
                     result.score = 0.0f;
                 }
                 std::lock_guard<std::mutex> lock(searchMutex_);
-                // Invert score to match player's perspective (positive for white, negative for black)
-                float adjustedScore = -result.score; // Invert to correct for your observation
+                float adjustedScore = -result.score;
                 result.score = adjustedScore;
                 lastSearchResult_ = result;
                 searchResultValid_ = true;
@@ -346,25 +345,29 @@ void Renderer::renderBoard(Board& board, bool& isWhiteTurn) {
         SDL_RenderPresent(renderer_);
     }
     if (premove_.first != -1 && premove_.second != -1 && isWhiteTurn && !aiThreadRunning_) {
-        Bitboard validMoves = board.getPieces()[premove_.first]->generateMoves(board, premove_.first);
-        if (validMoves.testBit(premove_.second) && board.movePiece(premove_.first, premove_.second)) {
-            AI_LOG("Premove from " + std::to_string(premove_.first) + " to " + std::to_string(premove_.second) + " applied");
-            isWhiteTurn = !isWhiteTurn;
-            moveHistory_.push_back(board);
-            historyIndex_ = moveHistory_.size() - 1;
-            premove_ = {-1, -1};
-            justAIMoved_ = false;
-            renderChessboard();
-            renderPieces(board);
-            SDL_RenderPresent(renderer_);
-            if (isAIActive_ && !isWhiteTurn && !aiThreadRunning_) {
-                AI_LOG("Triggering AI search after premove");
-                updateSearchResult(board, isWhiteTurn);
+        Bitboard validMoves = board.getPieces()[premove_.first] ? board.getPieces()[premove_.first]->generateMoves(board, premove_.first) : Bitboard(0);
+        if (validMoves.testBit(premove_.second)) {
+            if (board.movePiece(premove_.first, premove_.second)) {
+                AI_LOG("Premove from " + std::to_string(premove_.first) + " to " + std::to_string(premove_.second) + " applied");
+                isWhiteTurn = !isWhiteTurn;
+                moveHistory_.push_back(board);
+                historyIndex_ = moveHistory_.size() - 1;
+                premove_ = {-1, -1};
+                justAIMoved_ = false;
+                renderChessboard();
+                renderPieces(board);
+                SDL_RenderPresent(renderer_);
+                if (isAIActive_ && !isWhiteTurn && !aiThreadRunning_) {
+                    AI_LOG("Triggering AI search after premove");
+                    updateSearchResult(board, isWhiteTurn);
+                }
+            } else {
+                AI_LOG("Premove from " + std::to_string(premove_.first) + " to " + std::to_string(premove_.second) + " failed: movePiece returned false");
             }
         } else {
-            AI_LOG("Premove from " + std::to_string(premove_.first) + " to " + std::to_string(premove_.second) + " invalid, cleared");
-            premove_ = {-1, -1};
+            AI_LOG("Premove from " + std::to_string(premove_.first) + " to " + std::to_string(premove_.second) + " invalid, bitboard: " + std::to_string(validMoves.getValue()));
         }
+        premove_ = {-1, -1};
     }
     SDL_RenderPresent(renderer_);
 }
@@ -520,13 +523,12 @@ void Renderer::renderEvaluation(const SearchResult& result) {
         return;
     }
     static float displayedScore = 0.0f;
-    static float lastLoggedScore = std::numeric_limits<float>::quiet_NaN(); // Track last logged score
+    static float lastLoggedScore = std::numeric_limits<float>::quiet_NaN();
     displayedScore += (result.score - displayedScore) * 0.05f;
     if (std::isnan(displayedScore) || std::isinf(displayedScore)) {
         AI_LOG("Invalid displayed score: " + std::to_string(displayedScore));
         displayedScore = 0.0f;
     }
-    // Log only if score changes by more than 0.01
     if (std::abs(displayedScore - lastLoggedScore) > 0.01) {
         AI_LOG("Rendering evaluation: raw score=" + std::to_string(result.score) + ", displayed=" + std::to_string(displayedScore));
         lastLoggedScore = displayedScore;
@@ -541,9 +543,8 @@ void Renderer::renderEvaluation(const SearchResult& result) {
         evalStream << std::fixed << std::setprecision(2) << (displayedScore >= 0 ? "+" : "") << displayedScore;
     }
     std::string evalStr = evalStream.str();
-    // Set text color based on score
-    SDL_Color neonColor = {displayedScore < 0 ? 0 : 100, displayedScore < 0 ? 0 : 255, displayedScore < 0 ? 0 : 200, static_cast<Uint8>(180 + 75 * std::sin(SDL_GetTicks() / 1000.0f * 2))};
-    if (displayedScore < 0) neonColor = {0, 0, 0, 255}; // Black for negative (black advantage)
+    SDL_Color neonColor = {static_cast<Uint8>(displayedScore < 0 ? 0 : 100), static_cast<Uint8>(displayedScore < 0 ? 0 : 255), static_cast<Uint8>(displayedScore < 0 ? 0 : 200), static_cast<Uint8>(180 + 75 * std::sin(SDL_GetTicks() / 1000.0f * 2))};
+    if (displayedScore < 0) neonColor = {0, 0, 0, 255};
     SDL_Surface* evalSurface = TTF_RenderText_Blended(boldFont_, evalStr.c_str(), evalStr.length(), neonColor);
     if (evalSurface) {
         SDL_Texture* evalTexture = SDL_CreateTextureFromSurface(renderer_, evalSurface);
@@ -561,25 +562,24 @@ void Renderer::renderEvaluation(const SearchResult& result) {
     }
     float eval = displayedScore;
     const float MAX_EVAL_RANGE = 10.0f;
-    // Calculate split point for thermometer effect (black top, white bottom, correct progression)
-    float splitPoint = 248.0f - (eval / MAX_EVAL_RANGE) * 248.0f; // Increases with white advantage, decreases with black advantage
-    splitPoint = std::clamp(splitPoint, 0.0f, 496.0f); // Ensure within bounds
-    AI_LOG("Eval: " + std::to_string(eval) + ", Split point: " + std::to_string(splitPoint));
-    // Draw background
+    float splitPoint = 248.0f - (eval / MAX_EVAL_RANGE) * 248.0f;
+    splitPoint = std::clamp(splitPoint, 0.0f, 496.0f);
+    static float lastLoggedSplit = std::numeric_limits<float>::quiet_NaN();
+    if (std::abs(splitPoint - lastLoggedSplit) > 0.01f) {
+        AI_LOG("Eval: " + std::to_string(eval) + ", Split point: " + std::to_string(splitPoint));
+        lastLoggedSplit = splitPoint;
+    }
     SDL_SetRenderDrawColor(renderer_, 75, 85, 100, 255); // #4B5564 neutral background
     SDL_FRect bgBar = {static_cast<float>(EVAL_BAR_X), static_cast<float>(BOARD_OFFSET_Y), 20.0f, 496.0f};
     SDL_RenderFillRect(renderer_, &bgBar);
-    // Draw black portion (top) if not flipped, or white if flipped
     if (!isBoardFlipped_) {
         SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255); // Black
         SDL_FRect blackBar = {static_cast<float>(EVAL_BAR_X), static_cast<float>(BOARD_OFFSET_Y), 20.0f, splitPoint};
         SDL_RenderFillRect(renderer_, &blackBar);
-        // Draw white portion (bottom)
         SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255); // White
         SDL_FRect whiteBar = {static_cast<float>(EVAL_BAR_X), static_cast<float>(BOARD_OFFSET_Y + splitPoint), 20.0f, 496.0f - splitPoint};
         SDL_RenderFillRect(renderer_, &whiteBar);
     } else {
-        // Flipped: white top, black bottom
         SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255); // White
         SDL_FRect whiteBar = {static_cast<float>(EVAL_BAR_X), static_cast<float>(BOARD_OFFSET_Y), 20.0f, splitPoint};
         SDL_RenderFillRect(renderer_, &whiteBar);
@@ -587,7 +587,6 @@ void Renderer::renderEvaluation(const SearchResult& result) {
         SDL_FRect blackBar = {static_cast<float>(EVAL_BAR_X), static_cast<float>(BOARD_OFFSET_Y + splitPoint), 20.0f, 496.0f - splitPoint};
         SDL_RenderFillRect(renderer_, &blackBar);
     }
-    // Render top move variations
     int yOffset = VARIANTS_Y;
     for (size_t i = 0; i < std::min<size_t>(result.topMoves.size(), 10); ++i) {
         const auto& move = result.topMoves[i];
@@ -668,7 +667,7 @@ void Renderer::makeAIMove(Board& board, bool& isWhiteTurn) {
     AI_LOG("Piece color at from position is black");
     Bitboard validMoves = board.getPieces()[lastSearchResult_.bestMove.first]->generateMoves(board, lastSearchResult_.bestMove.first);
     if (!validMoves.testBit(lastSearchResult_.bestMove.second)) {
-        AI_LOG("AI move failed: move from " + std::to_string(lastSearchResult_.bestMove.first) + " to " + std::to_string(lastSearchResult_.bestMove.second) + " is not valid, valid moves: " + std::to_string(validMoves.getValue()));
+        AI_LOG("AI move failed: move from " + std::to_string(lastSearchResult_.bestMove.first) + " to " + std::to_string(lastSearchResult_.bestMove.second) + " is not valid, bitboard: " + std::to_string(validMoves.getValue()));
         return;
     }
     AI_LOG("Move from " + std::to_string(lastSearchResult_.bestMove.first) + " to " + std::to_string(lastSearchResult_.bestMove.second) + " is valid");
@@ -807,9 +806,8 @@ void Renderer::handleEvents(SDL_Event& event, Board& board, bool& isWhiteTurn) {
                     } else {
                         AI_LOG("Move from " + std::to_string(selectedSquare_) + " to " + std::to_string(toSquare) + " failed: movePiece returned false");
                     }
-                } else if (!isWhiteTurn && isAIActive_) {
-                    premove_ = {selectedSquare_, toSquare};
-                    AI_LOG("Premove set from " + std::to_string(selectedSquare_) + " to " + std::to_string(toSquare));
+                } else {
+                    AI_LOG("Move from " + std::to_string(selectedSquare_) + " to " + std::to_string(toSquare) + " not in valid moves, bitboard: " + std::to_string(validMoves.getValue()));
                 }
             }
             setSelectedSquare(-1);

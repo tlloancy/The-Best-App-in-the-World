@@ -1,9 +1,9 @@
-# CMakeLists.txt
 cmake_minimum_required(VERSION 3.10)
 project(CosmicChess)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -no-pie")
 
 # Find PkgConfig
 find_package(PkgConfig REQUIRED)
@@ -77,6 +77,8 @@ enable_language(ASM_NASM)
 if(NOT CMAKE_ASM_NASM_COMPILER_LOADED)
     message(FATAL_ERROR "NASM assembler not found even after installation attempt.")
 endif()
+set(CMAKE_ASM_NASM_COMPILE_OBJECT "<CMAKE_ASM_NASM_COMPILER> <INCLUDES> <FLAGS> -f elf64 -o <OBJECT> <SOURCE>")
+set(CMAKE_ASM_NASM_LINK_EXECUTABLE "ld <FLAGS> <CMAKE_ASM_NASM_LINK_FLAGS> <LINK_FLAGS> <OBJECTS>  -o <TARGET> <LINK_LIBRARIES>")
 
 include(FetchContent)
 set(FETCHCONTENT_QUIET FALSE)
@@ -116,6 +118,8 @@ set(SOURCES
     src/utils/Logger.cpp
     src/utils/Convert.cpp
     asm/popcount.asm
+    asm/bishop_attacks.asm
+    asm/uctScore.asm
 )
 
 # Executable
