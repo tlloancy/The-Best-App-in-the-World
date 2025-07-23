@@ -1,10 +1,10 @@
-; rook_attacks.asm
-; Generate rook attacks with obstacle detection and color handling
+; pawn_attacks.asm
+; Generate pawn attacks with obstacle detection and color handling
 section .text
-global _generate_rook_attacks
+global _generate_pawn_attacks
 
 ; Arguments: rdi = const Board*, rsi = int square, rdx = Bitboard&, rcx = const int* (directions), r8 = const Piece** (pieces)
-_generate_rook_attacks:
+_generate_pawn_attacks:
     push rbp
     mov rbp, rsp
     sub rsp, 48         ; Aligned space for local variables
@@ -31,26 +31,22 @@ _generate_rook_attacks:
     mov r11b, [r10 + 8]     ; Color at offset 8
 
 .loop:
-    cmp ecx, 4          ; Only 4 directions for rook
-    jge .done
+    cmp ecx, 2          ; Only 2 directions for pawn attacks
+    jge .en_passant     ; After directions, check en passant
 
     ; Load directions pointer
     mov r12, [rbp-32]   ; r12 = directions
     mov r14, rcx
     shl r14, 3          ; r14 = rcx * 8 (since each pair is 8 bytes)
     mov eax, [r12 + r14] ; dy = rank change = directions[rcx*2 + 0]
-    movsxd rax, eax     ; Sign-extend dy
-    mov [rbp-48], eax   ; Save dy
     mov ebx, [r12 + r14 + 4] ; dx = file change = directions[rcx*2 + 1]
-    movsxd rbx, ebx     ; Sign-extend dx
-    mov [rbp-44], ebx   ; Save dx
 
     mov r9d, edx        ; newRank = rank
     mov r10d, r8d       ; newFile = file
 
 .step:
-    add r9d, [rbp-48]   ; newRank += dy
-    add r10d, [rbp-44]  ; newFile += dx
+    add r9d, eax        ; newRank += dy
+    add r10d, ebx       ; newFile += dx
 
     ; Check board boundaries
     cmp r9d, 0
@@ -68,28 +64,68 @@ _generate_rook_attacks:
     mov r14, [rbp-40]   ; Reload pieces pointer
     mov r15, [r14 + r13*8] ; Load piece at newSquare
 
-    ; Set bit for valid move
+    test r15, r15       ; Check if piece exists
+    jnz .check_color    ; If piece exists, check color
+    ; Empty square: check if en passant target
+    mov rdi, [rbp-8]    ; Load board
+    mov edi, [rdi + 8]  ; Assume enPassantSquare at offset 8
+    cmp r13d, edi       ; Compare with newSquare
+    jne .next_dir       ; Not en passant, skip
     mov rdi, [rbp-24]   ; Load attacks Bitboard
     mov rax, [rdi]
     bts rax, r13
     mov [rdi], rax
-
-    ; Check for piece at newSquare
-    test r15, r15       ; Check if piece exists
-    jnz .check_color    ; If piece exists, check color
-    jmp .step           ; No piece, continue in direction
+    jmp .next_dir       ; Set and stop
 
 .check_color:
     mov r14b, [r15 + 8]     ; Load color of piece at newSquare (offset 8)
     cmp r14b, r11b      ; Compare with own color
     je .next_dir        ; Same color, stop
-    ; Opposite color, bit already set, stop
+    ; Opposite color, set bit and stop
+    mov rdi, [rbp-24]   ; Load attacks Bitboard
+    mov rax, [rdi]
+    bts rax, r13
+    mov [rdi], rax
     jmp .next_dir
 
 .next_dir:
     inc ecx
     jmp .loop
 
+.en_passant:
+    ; Separate global en passant check if not caught in directions
+    mov rdi, [rbp-8]    ; Load board
+    mov edi, [rdi + 8]  ; enPassantSquare
+    cmp edi, -1
+    je .done
+    mov r13d, edi
+    ; Verify if adjacent file
+    mov r9d, r13d
+    shr r9d, 3          ; en rank
+    mov r10d, r13d
+    and r10d, 7         ; en file
+    sub r9d, edx        ; diff rank = en_rank - rank
+    cmp r9d, [rbp-48]   ; Compare with dy (last dy, but better to recompute)
+    jne .done
+    mov r9d, r10d
+    sub r9d, r8d        ; diff file
+    cmp r9d, -1
+    je .set_en
+    cmp r9d, 1
+    jne .done
+.set_en:
+    mov r14, [rbp-40]
+    mov r15, [r14 + r13*8]
+    test r15, r15
+    jz .set_bit_en
+    mov r14b, [r15 + 8]
+    cmp r14b, r11b
+    je .done
+.set_bit_en:
+    mov rdi, [rbp-24]
+    mov rax, [rdi]
+    bts rax, r13
+    mov [rdi], rax
 .done:
     leave
     ret

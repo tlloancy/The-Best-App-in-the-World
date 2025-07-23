@@ -1,6 +1,9 @@
 #include "../../include/core/Pawn.hpp"
 #include "../../include/core/Board.hpp"
 #include <iostream>
+#include <array>
+
+extern "C" void _generate_pawn_attacks(const Board* board, int square, Bitboard* attacks, const int* directions, const Piece** pieces);
 
 Pawn::Pawn(Color c) : color_(c) {}
 
@@ -30,7 +33,18 @@ Bitboard Pawn::generateMoves(const Board& board, int square) const {
     }
     return moves;
 }
-
+/*
+Bitboard Pawn::generateAttacks(const Board& board, int square) const {
+    Bitboard attacks(0);
+    static const int pawnDirs[2][2] = {{(getColor() == Color::White) ? 1 : -1, -1}, {(getColor() == Color::White) ? 1 : -1, 1}};
+    std::array<const Piece*, 64> piece_ptrs;
+    for (size_t i = 0; i < 64; ++i) {
+        piece_ptrs[i] = board.getPieces()[i].get();
+    }
+    _generate_pawn_attacks(&board, square, &attacks, &pawnDirs[0][0], piece_ptrs.data());
+    return attacks;
+}
+*/
 Bitboard Pawn::generateAttacks(const Board& board, int square) const {
     Bitboard attacks(0);
     int dir = (getColor() == Color::White) ? 8 : -8;
@@ -50,3 +64,4 @@ Bitboard Pawn::generateAttacks(const Board& board, int square) const {
     }
     return attacks;
 }
+

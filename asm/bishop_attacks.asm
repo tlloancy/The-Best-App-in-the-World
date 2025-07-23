@@ -28,7 +28,7 @@ _generate_bishop_attacks:
     mov r10, [r9 + rsi*8] ; Load piece at square
     test r10, r10
     jz .done
-    mov r11b, [r10]     ; Color at offset 0
+    mov r11b, [r10 + 8]     ; Color at offset 8 (vtable)
 
 .loop:
     cmp ecx, 4          ; Only 4 directions for bishop
@@ -68,23 +68,26 @@ _generate_bishop_attacks:
     mov r14, [rbp-40]   ; Reload pieces pointer
     mov r15, [r14 + r13*8] ; Load piece at newSquare
 
-    ; Set bit for valid move
+    test r15, r15       ; Check if piece exists
+    jz .set_and_continue ; Empty, set and continue
+
+.check_color:
+    mov r14b, [r15 + 8]     ; Load color of piece at newSquare (offset 8)
+    cmp r14b, r11b      ; Compare with own color
+    je .next_dir        ; Same color, stop without setting bit
+    ; Opposite color, set bit and stop
     mov rdi, [rbp-24]   ; Load attacks Bitboard
     mov rax, [rdi]
     bts rax, r13
     mov [rdi], rax
-
-    ; Check for piece at newSquare
-    test r15, r15       ; Check if piece exists
-    jnz .check_color    ; If piece exists, check color
-    jmp .step           ; No piece, continue in direction
-
-.check_color:
-    mov r14b, [r15]     ; Load color of piece at newSquare (offset 0)
-    cmp r14b, r11b      ; Compare with own color
-    je .next_dir        ; Same color, stop
-    ; Opposite color, bit already set, stop
     jmp .next_dir
+
+.set_and_continue:
+    mov rdi, [rbp-24]   ; Load attacks Bitboard
+    mov rax, [rdi]
+    bts rax, r13
+    mov [rdi], rax
+    jmp .step           ; Continue in direction
 
 .next_dir:
     inc ecx

@@ -119,6 +119,11 @@ set(SOURCES
     src/utils/Convert.cpp
     asm/popcount.asm
     asm/bishop_attacks.asm
+    asm/queen_attacks.asm
+    asm/rook_attacks.asm
+    asm/pawn_attacks.asm
+    asm/knight_attacks.asm
+    asm/king_attacks.asm
     asm/uctScore.asm
 )
 

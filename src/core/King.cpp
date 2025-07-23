@@ -11,6 +11,8 @@ constexpr int BLACK_CASTLE_KINGSIDE_PASS = 61;
 constexpr int BLACK_CASTLE_QUEENSIDE_KING_TO = 58;
 constexpr int BLACK_CASTLE_QUEENSIDE_PASS = 59;
 
+extern "C" void _generate_king_attacks(const Board* board, int square, Bitboard* attacks, const int* directions, const Piece** pieces);
+
 King::King(Color c) : color_(c) {}
 
 PieceType King::getType() const {
@@ -60,6 +62,18 @@ Bitboard King::generateMoves(const Board& board, int square) const {
 
 Bitboard King::generateAttacks(const Board& board, int square) const {
     Bitboard attacks(0);
+    static const int kingDirs[8][2] = {{1, 0}, {1, 1}, {1, -1}, {0, 1}, {0, -1}, {-1, 0}, {-1, 1}, {-1, -1}};
+    std::array<const Piece*, 64> piece_ptrs;
+    for (size_t i = 0; i < 64; ++i) {
+        piece_ptrs[i] = board.getPieces()[i].get();
+    }
+    _generate_king_attacks(&board, square, &attacks, &kingDirs[0][0], piece_ptrs.data());
+    return attacks;
+}
+
+/*
+Bitboard King::generateAttacks(const Board& board, int square) const {
+    Bitboard attacks(0);
     int rank = square / 8;
     int file = square % 8;
     Color ownColor = getColor();
@@ -77,3 +91,4 @@ Bitboard King::generateAttacks(const Board& board, int square) const {
     }
     return attacks;
 }
+*/

@@ -2,6 +2,8 @@
 #include "../../include/core/Board.hpp"
 #include <iostream>
 
+extern "C" void _generate_rook_attacks(const Board* board, int square, Bitboard* attacks, const int* directions, const Piece** pieces);
+
 Rook::Rook(Color c) : color_(c) {}
 
 PieceType Rook::getType() const {
@@ -16,6 +18,17 @@ Bitboard Rook::generateMoves(const Board& board, int square) const {
     return generateAttacks(board, square);
 }
 
+Bitboard Rook::generateAttacks(const Board& board, int square) const {
+    Bitboard attacks(0);
+    static const int rookDirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    std::array<const Piece*, 64> piece_ptrs;
+    for (size_t i = 0; i < 64; ++i) {
+        piece_ptrs[i] = board.getPieces()[i].get();
+    }
+    _generate_rook_attacks(&board, square, &attacks, &rookDirs[0][0], piece_ptrs.data());
+    return attacks;
+}
+/*
 Bitboard Rook::generateAttacks(const Board& board, int square) const {
     Bitboard attacks(0);
     int rank = square / 8;
@@ -41,3 +54,4 @@ Bitboard Rook::generateAttacks(const Board& board, int square) const {
     }
     return attacks;
 }
+*/

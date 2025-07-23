@@ -1,10 +1,10 @@
-; rook_attacks.asm
-; Generate rook attacks with obstacle detection and color handling
+; queen_attacks.asm
+; Generate queen attacks with obstacle detection and color handling
 section .text
-global _generate_rook_attacks
+global _generate_queen_attacks
 
 ; Arguments: rdi = const Board*, rsi = int square, rdx = Bitboard&, rcx = const int* (directions), r8 = const Piece** (pieces)
-_generate_rook_attacks:
+_generate_queen_attacks:
     push rbp
     mov rbp, rsp
     sub rsp, 48         ; Aligned space for local variables
@@ -31,7 +31,7 @@ _generate_rook_attacks:
     mov r11b, [r10 + 8]     ; Color at offset 8
 
 .loop:
-    cmp ecx, 4          ; Only 4 directions for rook
+    cmp ecx, 8          ; 8 directions for queen
     jge .done
 
     ; Load directions pointer
