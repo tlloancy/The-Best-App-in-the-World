@@ -68,23 +68,26 @@ _generate_rook_attacks:
     mov r14, [rbp-40]   ; Reload pieces pointer
     mov r15, [r14 + r13*8] ; Load piece at newSquare
 
-    ; Set bit for valid move
-    mov rdi, [rbp-24]   ; Load attacks Bitboard
-    mov rax, [rdi]
-    bts rax, r13
-    mov [rdi], rax
-
-    ; Check for piece at newSquare
     test r15, r15       ; Check if piece exists
-    jnz .check_color    ; If piece exists, check color
-    jmp .step           ; No piece, continue in direction
+    jz .set_and_continue ; Empty, set and continue
 
 .check_color:
     mov r14b, [r15 + 8]     ; Load color of piece at newSquare (offset 8)
     cmp r14b, r11b      ; Compare with own color
     je .next_dir        ; Same color, stop
-    ; Opposite color, bit already set, stop
+    ; Opposite color, set bit and stop
+    mov rdi, [rbp-24]   ; Load attacks Bitboard
+    mov rax, [rdi]
+    bts rax, r13
+    mov [rdi], rax
     jmp .next_dir
+
+.set_and_continue:
+    mov rdi, [rbp-24]   ; Load attacks Bitboard
+    mov rax, [rdi]
+    bts rax, r13
+    mov [rdi], rax
+    jmp .step           ; Continue in direction
 
 .next_dir:
     inc ecx
